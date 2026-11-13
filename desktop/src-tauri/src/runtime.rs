@@ -23,7 +23,7 @@ mod history;
 mod history_retention;
 mod path_actions;
 pub use history_retention::{
-    HistoryPayloadKindV1, HistoryStoreStatusV1, ReclaimOutcomeV1, ReclaimProgressV1,
+    HistoryPayloadKindV1, HistoryStoreReader, HistoryStoreStatusV1, ReclaimOutcomeV1, ReclaimProgressV1,
     ReclaimReportV1,
 };
 mod history_index;

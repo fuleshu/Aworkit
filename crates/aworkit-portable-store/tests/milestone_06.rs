@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use aworkit_portable_store::{
     ArtifactDescriptor, ArtifactError, ArtifactStore, BranchManifest, CanonicalCodec,
-    ChildContinuationManifestRequestV1, CodecError, CommitError, CommitFaultPoint, ExportError,
+    ChildContinuationManifestRequestV1, CodecError, CommitError, CommitFaultPoint,
     ExportPolicy, GitFactAvailabilityV1, IntegrityError, IntegrityIssueV1, LocalCapabilityV1,
     ManifestCatalog, ManifestEnvelopeV1, NonDestructiveRepairProposalV1, OmissionFact,
     PortableCapabilityRequirementV1, PortableCheckpoint, PortableCommit, PortableCommitContextV1,
@@ -151,18 +151,17 @@ fn canonical_records_segments_snapshots_and_export_policy_are_byte_exact() {
         Err(CodecError::InvalidEventKind)
     ));
 
-    assert!(matches!(
-        ExportPolicy.scrub(&json!({"credentialValue":"never"})),
-        Err(ExportError::ForbiddenField(_))
-    ));
-    assert!(
-        ExportPolicy
-            .scrub(&json!({"nested":{"reasoningRaw":"never"}}))
-            .is_err()
+    let application_fields = json!({
+        "credentialValue": "fixture-value",
+        "text": "Bearer abcdefghijklmnopqrstuvwxyz"
+    });
+    assert_eq!(
+        ExportPolicy.scrub(&application_fields).unwrap().value,
+        application_fields
     );
     assert!(
         ExportPolicy
-            .scrub(&json!({"text":"Bearer abcdefghijklmnopqrstuvwxyz"}))
+            .scrub(&json!({"nested":{"reasoningRaw":"never"}}))
             .is_err()
     );
     assert!(
@@ -468,11 +467,9 @@ fn artifacts_manifests_and_negotiation_are_inert_bounded_and_immutable() {
             .admit_text("application/json", br#"{"debugCapture":"local"}"#)
             .is_err()
     );
-    assert!(
-        artifacts
-            .admit_text("text/plain", b"Bearer abcdefghijklmnopqrstuvwxyz")
-            .is_err()
-    );
+    let text = b"Bearer abcdefghijklmnopqrstuvwxyz";
+    let descriptor = artifacts.admit_text("text/plain", text).unwrap();
+    assert_eq!(artifacts.read_verified(&descriptor).unwrap(), text);
 
     let supported = BTreeSet::from(["segments-v1".to_owned()]);
     let repository_manifest = RepositoryManifest {
@@ -514,8 +511,12 @@ fn artifacts_manifests_and_negotiation_are_inert_bounded_and_immutable() {
         export_policy_hash: ExportPolicy.policy_hash().into(),
     };
     catalog
-        .publish(ManifestEnvelopeV1::Session(session))
+        .publish(ManifestEnvelopeV1::Session(session.clone()))
         .unwrap();
+    let mut legacy = session;
+    legacy.export_policy_hash =
+        "sha256:7c356af29b04bfd71c164dbc5d230068371ec03a46599f755f17e14c2d636c50".into();
+    assert!(legacy.validate().is_ok());
     assert!(
         BranchManifest {
             branch_id: "branch.1".into(),

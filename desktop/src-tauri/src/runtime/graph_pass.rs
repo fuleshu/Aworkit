@@ -37,7 +37,8 @@ use super::{
     },
     pipeline::{MAXIMUM_PROVIDER_REQUEST_BYTES, WorkflowMessageV1},
     tool_loop::{
-        StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1, question,
+        StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1,
+        extend_implied_job_controls, question,
     },
 };
 
@@ -400,6 +401,7 @@ pub(crate) fn compile_graph_pass(
                         .cloned();
                     if let Some(binding) = binding { tool_bindings_for_node.push(binding); }
                 }
+                extend_implied_job_controls(&mut tool_bindings_for_node, tool_bindings);
             }
             "tool" => {
                 let tool_id = configuration

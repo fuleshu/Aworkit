@@ -58,6 +58,24 @@ afterEach(() => {
 });
 
 describe("Settings v2 workbench", () => {
+  it("saves a model change before measuring the hidden history store", async () => {
+    const port = new RecordingSettingsV2Port();
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    const remoteId = await screen.findByLabelText("Remote model ID");
+    expect(port.historyStatusCalls).toBe(0);
+    fireEvent.change(remoteId, { target: { value: "updated-model" } });
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await screen.findByText("Settings saved.");
+    expect(port.commits[0]?.settings.providers[0]?.models[0]?.remoteId).toBe("updated-model");
+    expect(port.historyStatusCalls).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: /Data & sessions/ }));
+    await screen.findByText("30.7 GB");
+    expect(port.historyStatusCalls).toBe(1);
+  });
+
   it.each(["conflict", "receipt", "snapshot", "content"])("Save and return preserves the draft after a %s failure", async failure => {
     const port = new RecordingSettingsV2Port();
     if (failure === "conflict") port.conflictOnce = true;

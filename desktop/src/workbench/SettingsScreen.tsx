@@ -15,6 +15,7 @@ import type {
   SettingsConfigurationV2,
   SettingsV2Snapshot,
 } from "./configuration";
+import { describeSettingsProblems, settingsProblems } from "./configuration";
 import { AppearanceSection } from "./settings-v2/AppearanceSection";
 import { DesktopSection } from "./settings-v2/DesktopSection";
 import { ComfyUiSection } from "./settings-v2/ComfyUiSection";
@@ -119,6 +120,8 @@ export function SettingsScreen({
   const [section, setSection] = useState<SettingsSectionId>(initialSection);
   const [snapshot, setSnapshot] = useState<SettingsV2Snapshot | null>(null);
   const [draft, setDraft] = useState<SettingsConfigurationV2 | null>(null);
+  /** Why the last canonical load failed, shown instead of a generic message. */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [jsonErrors, setJsonErrors] = useState<
     Readonly<Record<string, string>>
   >({});
@@ -236,9 +239,19 @@ export function SettingsScreen({
     setLoading(true);
     try {
       const latest = await port.snapshot();
-      if (applySnapshot(latest, false)) setBanner(null);
+      if (applySnapshot(latest, false)) {
+        setLoadError(null);
+        const recovered = settingsProblems(latest);
+        setBanner(
+          recovered.length > 0
+            ? { tone: "error", message: describeSettingsProblems(recovered) }
+            : null,
+        );
+      }
     } catch (failure) {
-      setBanner({ tone: "error", message: failureMessage(failure) });
+      const message = failureMessage(failure);
+      setLoadError(message);
+      setBanner({ tone: "error", message });
     } finally {
       setLoading(false);
     }
@@ -252,11 +265,21 @@ export function SettingsScreen({
       .snapshot()
       .then((latest) => {
         if (!current) return;
-        if (applySnapshot(latest, false)) setBanner(null);
+        if (applySnapshot(latest, false)) {
+          setLoadError(null);
+          const recovered = settingsProblems(latest);
+          setBanner(
+            recovered.length > 0
+              ? { tone: "error", message: describeSettingsProblems(recovered) }
+              : null,
+          );
+        }
       })
       .catch((failure: unknown) => {
         if (!current) return;
-        setBanner({ tone: "error", message: failureMessage(failure) });
+        const message = failureMessage(failure);
+        setLoadError(message);
+        setBanner({ tone: "error", message });
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -282,7 +305,10 @@ export function SettingsScreen({
     snapshot !== null &&
     busy === null &&
     dirtySections.size > 0 &&
-    issues.length === 0;
+    issues.length === 0 &&
+    // The draft is the filtered view; saving it while entries were rejected
+    // would delete those entries from the canonical document.
+    settingsProblems(snapshot).length === 0;
 
   const updateDraft = useCallback(
     (update: (current: SettingsConfigurationV2) => SettingsConfigurationV2) => {
@@ -794,6 +820,9 @@ export function SettingsScreen({
           ) : draft === null || snapshot === null ? (
             <div className="settings-loading">
               <p>Canonical settings could not be loaded.</p>
+              {loadError !== null ? (
+                <p className="settings-loading-detail">{loadError}</p>
+              ) : null}
               <button
                 title="Retry loading the complete canonical settings document"
                 type="button"
@@ -1207,6 +1236,7 @@ export function SettingsScreen({
                   }
                 />
                 <HistoryStoreSection
+                  active={active && section === "data"}
                   loadStatus={() => port.historyStoreStatus()}
                   reclaim={() => port.historyReclaim()}
                   onProgress={(handler) =>

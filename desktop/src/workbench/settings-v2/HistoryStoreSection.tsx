@@ -53,11 +53,13 @@ function progressLabel(progress: HistoryReclaimProgress): string {
  * on its own, and it states its cost before it starts.
  */
 export function HistoryStoreSection({
+  active = true,
   loadStatus,
   reclaim,
   onProgress,
   confirm,
 }: {
+  readonly active?: boolean;
   readonly loadStatus: () => Promise<HistoryStoreStatus>;
   readonly reclaim: () => Promise<HistoryReclaimOutcome>;
   readonly onProgress: (
@@ -75,10 +77,10 @@ export function HistoryStoreSection({
   const [progress, setProgress] = useState<HistoryReclaimProgress | null>(null);
   const [outcome, setOutcome] = useState<HistoryReclaimOutcome | null>(null);
   const [reclaimError, setReclaimError] = useState<string | null>(null);
-  // Both props are inline arrows at the call site. The one measurement and the
-  // one subscription happen when the section mounts, so they read the current
-  // props through refs instead of re-running on every parent render.
+  // Keep inline callbacks current without repeating measurements or subscriptions
+  // on each Settings render.
   const callbacks = useRef({ loadStatus, onProgress });
+  const requestedInitialStatus = useRef(false);
   useEffect(() => {
     callbacks.current = { loadStatus, onProgress };
   }, [loadStatus, onProgress]);
@@ -99,9 +101,15 @@ export function HistoryStoreSection({
   }, []);
 
   useEffect(() => {
+    if (active && !requestedInitialStatus.current) {
+      requestedInitialStatus.current = true;
+      void measure();
+    }
+  }, [active, measure]);
+
+  useEffect(() => {
     let current = true;
     let unlisten: (() => void) | null = null;
-    void measure();
     void callbacks.current
       .onProgress((next) => {
         if (current) setProgress(next);
@@ -118,7 +126,7 @@ export function HistoryStoreSection({
       current = false;
       unlisten?.();
     };
-  }, [measure]);
+  }, []);
 
   const runReclaim = async () => {
     setConfirming(false);

@@ -83,7 +83,13 @@ const provider = createServer(async (req, res) => {
     } else if (phase === 'implied') {
       // The workflow never selected the control tools for this Chat, so control
       // must be implied by the capability itself: one behaviour everywhere.
-      if (turn === 1) message=call('python',{script:'import time; print("start",flush=True); time.sleep(60)'});
+      if (turn === 1) {
+        const names = (body.tools ?? []).map(t => t.function.name);
+        for (const control of ['job_output', 'job_input', 'job_stop', 'job_list', 'job_keep']) {
+          assert.ok(names.includes(control), `Python must imply ${control}: ${JSON.stringify(names)}`);
+        }
+        message=call('python',{script:'import time; print("start",flush=True); time.sleep(60)'});
+      }
       else if (turn === 2) {
         assert.ok(last.jobId,JSON.stringify(last));
         assert.notEqual(last.timedOut,true,JSON.stringify(last));
@@ -93,6 +99,13 @@ const provider = createServer(async (req, res) => {
         assert.equal(last.status,'stopped',JSON.stringify(last));
         message={content:'Control tools are implied by the host Python capability.'};
       }
+    } else if (phase === 'catalog') {
+      const tools = body.tools.map(entry => entry.function);
+      assert.equal(tools.length, 273);
+      const schema = tools.find(tool => tool.parameters?.properties?.remote)?.parameters;
+      assert.equal(schema?.properties?.remote?.properties?.token?.type, 'string');
+      assert.equal(schema?.properties?.secrets?.type, 'array');
+      message = {content:'The full tool catalog reached the model.'};
     } else if (phase === 'midchat') {
       // A capability the user adds while the Chat waits must reach the very next
       // pass of the same Chat, without a New Chat and without re-running work.
@@ -143,13 +156,19 @@ async function setValue(selector, value) {
 async function click(text) {
   await waitFor(`(()=>{const n=${JSON.stringify(text)};const b=[...document.querySelectorAll('button')].find(b=>!b.disabled&&b.getClientRects().length&&(b.title===n||b.textContent.trim()===n||b.textContent.trim().startsWith(n+' ')||b.getAttribute('aria-label')===n));if(!b)return false;b.click();return true;})()`);
 }
+async function newChat() {
+  await click('Create a new Chat');
+  await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='draft')");
+  await setValue('select[aria-label="Workflow for the first Chat input"]', 'workflow.simple-chat');
+}
 async function send(text) {
+  const before = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.events.at(-1)?.sequence ?? 0)");
   await waitFor(`(()=>{const e=document.querySelector('textarea[aria-label="Chat input"]');if(!e)return false;if(e.value!==${JSON.stringify(text)}){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));return false;}const b=document.querySelector('.composer-input .primary-action:not(:disabled)');if(!b)return false;b.click();return true;})()`);
   await waitFor(`(async()=>{
     const button=[...document.querySelectorAll('button')].find(b=>b.textContent==='Approve once'&&!b.disabled);
     if(button){button.click();return false;}
     const s=await window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0});
-    return s.chat.phase==='waiting_input';
+    return s.chat.phase==='waiting_input' && s.events.some(e=>e.sequence>${before}&&e.kind==='message.assistant');
   })()`);
   assert.deepEqual(failures, []);
 }
@@ -173,10 +192,7 @@ try {
   }
   await click('Validate'); await waitFor("document.body.innerText.includes('Validation passed: this workflow document is executable.')");
   await click('Save');
-  const previousChat = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId)");
-  await click('Run');
-  await waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId!==${JSON.stringify(previousChat)}&&document.body.innerText.includes(s.chat.runId)&&!document.querySelector('.workflow-library-bar')?.getClientRects().length)`);
-  await setValue('select[aria-label="Workflow for the first Chat input"]', 'workflow.simple-chat');
+  await newChat();
   // Leave the project unselected: jobs must work in the Chat's private workspace.
   await setValue('select[aria-label="Project for the first Chat input"]', '');
   await send(`Start an interactive ${language} job, verify stdin, and intentionally keep it running.`);
@@ -212,12 +228,30 @@ try {
       const w=await i('workflow_snapshot',{workflowId:'workflow.simple-chat'});
       w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=['tool.workspace_instructions','tool.python.host','tool.python.start'];
       await i('workflow_commit',{command:{commandId:'python.implied-workflow',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
-    await click('Workflows');
-    const previous = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId)");
-    await click('Run');
-    await waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId!==${JSON.stringify(previous)})`);
+    await newChat();
     phase='implied'; turn=0;
     await send('Run Python without selecting the control tools and verify the job still yields and can be stopped.');
+    await view.evaluate(`(async()=>{const i=window.__TAURI_INTERNALS__.invoke;
+      const v=await i('settings_v2_snapshot');
+      const schema={type:'object',properties:{
+        remote:{type:'object',properties:{token:{type:'string'}}},
+        secrets:{type:'array',items:{type:'string'}}
+      }};
+      v.settings.mcpServers.push({
+        id:'mcp.catalog-fixture',name:'Catalog fixture',enabled:true,autoConnect:false,
+        transport:{transport:'stdio',command:${JSON.stringify(pythonExecutable)},args:[],cwd:null,env:[]},
+        tools:Array.from({length:266},(_,index)=>({
+          name:'lookup_'+index,description:'Look up an entry.',inputSchema:schema,enabled:true
+        }))
+      });
+      await i('settings_v2_commit',{command:{commandId:'catalog.settings',expectedVersion:v.version,settings:v.settings}});
+      const w=await i('workflow_snapshot',{workflowId:'workflow.simple-chat'});
+      w.document.nodes.find(n=>n.type==='agent').configuration.toolIds.push('mcp:Catalog fixture');
+      await i('workflow_commit',{command:{commandId:'catalog.workflow',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
+    await newChat();
+    phase='catalog'; turn=0;
+    await send('Verify the full tool catalog reaches the model.');
+    assert.equal(turn, 1);
   }
   await writeFile(resolve(root, 'requests.json'), JSON.stringify({requests,events}, null, 2));
   await view.screenshot(resolve(root, 'verified.png'));

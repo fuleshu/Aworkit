@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use super::digest;
+use super::{digest, history::ChatHistory};
 
 /// How many of one Chat's newest turns keep their full snapshot payload.
 pub(crate) const RETAINED_TURNS_V1: usize = 20;
@@ -153,6 +153,42 @@ pub struct HistoryPayloadKindV1 {
     pub kind: String,
     pub events: u64,
     pub bytes: u64,
+}
+
+/// Read-only handle for measuring the store without holding the runtime lock.
+pub struct HistoryStoreReader {
+    pub(crate) history: ChatHistory,
+}
+
+impl HistoryStoreReader {
+    /// Measure retained history and delivery bytes using independent SQLite reads.
+    pub fn measure(&self) -> Result<HistoryStoreStatusV1, String> {
+        let (database, log) = self.history.file_bytes();
+        let breakdown = self.history.payload_breakdown()?;
+        let (outbox_rows, outbox_delivered_rows, outbox_bytes) = self.history.outbox_bytes()?;
+        let mut status = HistoryStoreStatusV1 {
+            store_bytes: database.saturating_add(log),
+            outbox_rows,
+            outbox_delivered_rows,
+            outbox_bytes,
+            retained_turns: RETAINED_TURNS_V1 as u64,
+            ..HistoryStoreStatusV1::default()
+        };
+        for (kind, events, bytes) in breakdown {
+            status.payload_bytes = status.payload_bytes.saturating_add(bytes);
+            if PRUNABLE_KINDS.contains(&kind.as_str()) {
+                status.snapshot_bytes = status.snapshot_bytes.saturating_add(bytes);
+            }
+            status.kinds.push(HistoryPayloadKindV1 { kind, events, bytes });
+        }
+        for chat_id in self.history.deleted_chat_ids()? {
+            status.deleted_chats = status.deleted_chats.saturating_add(1);
+            status.deleted_chat_bytes = status
+                .deleted_chat_bytes
+                .saturating_add(self.history.stream_payload_bytes(&chat_id)?);
+        }
+        Ok(status)
+    }
 }
 
 /// The payload field that marks a payload whose bytes were dropped.

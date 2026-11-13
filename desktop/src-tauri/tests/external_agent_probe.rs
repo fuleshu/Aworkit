@@ -54,7 +54,9 @@ fn desktop_probe_runs_documented_codex_app_server_handshake_without_starting_a_t
                     args: vec!["app-server".into()],
                     cwd: Some(fixture_directory.display().to_string()),
                     env: Vec::new(),
-                },
+                
+                                                              environment: Default::default(),
+                                                          },
                 credential_bindings: Vec::new(),
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),

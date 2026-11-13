@@ -180,7 +180,9 @@ fn connected_codex_settings(
                 args: target.arguments.clone(),
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),

@@ -5,7 +5,7 @@
 //! pinning, deletion tombstones, fork lineage, and a rebuildable sidebar
 //! summary. The summary is a read model: Chat content remains authoritative.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use aworkit_local_store::{CommitBatch, CommitOutcome, Deduplication, Event, LocalHistoryStore};
 use aworkit_protocol::StableId;
@@ -62,21 +62,109 @@ pub(crate) struct HistoryIndexState {
     pub selected_chat_id: StableId,
 }
 
-pub(crate) fn events(store: &LocalHistoryStore) -> Result<Vec<Event>, String> {
+fn head(store: &LocalHistoryStore) -> Result<u64, String> {
     store
-        .events(HISTORY_INDEX_ID, BRANCH_ID)
-        .map_err(|error| format!("cannot read Chat history index: {error}"))
+        .head_sequence(HISTORY_INDEX_ID, BRANCH_ID)
+        .map(|head| head.unwrap_or(0))
+        .map_err(|error| format!("cannot read Chat history index head: {error}"))
 }
 
-/// Folds the immutable metadata aggregate into the current sidebar state.
-pub(crate) fn load(store: &LocalHistoryStore) -> Result<Option<HistoryIndexState>, String> {
-    let events = events(store)?;
-    if events.is_empty() {
-        return Ok(None);
+/// The shared navigation projection keeps only current rows and replay receipts.
+/// Each read catches up to the durable head using the newly committed facts.
+#[derive(Default)]
+pub(crate) struct HistoryIndex(Mutex<IndexCache>);
+
+#[derive(Default)]
+struct IndexCache {
+    head: u64,
+    entries: BTreeMap<String, IndexedChat>,
+    selected: Option<StableId>,
+    receipts: BTreeMap<String, StoredReceipt>,
+}
+
+struct StoredReceipt {
+    hash: Option<String>,
+    result_head: Option<u64>,
+}
+
+impl HistoryIndex {
+    fn read(
+        &self,
+        store: &LocalHistoryStore,
+    ) -> Result<std::sync::MutexGuard<'_, IndexCache>, String> {
+        let mut cache = self
+            .0
+            .lock()
+            .map_err(|_| "Chat history index unavailable")?;
+        let durable_head = head(store)?;
+        if durable_head < cache.head {
+            *cache = IndexCache::default();
+        }
+        while cache.head < durable_head {
+            let page = store
+                .event_window(
+                    HISTORY_INDEX_ID,
+                    BRANCH_ID,
+                    cache.head,
+                    durable_head,
+                    false,
+                    512,
+                )
+                .map_err(|error| format!("cannot read Chat history index: {error}"))?;
+            if page.is_empty() {
+                return Err("Chat history index tail is incomplete".into());
+            }
+            for (sequence, event) in page {
+                if sequence != cache.head + 1 {
+                    return Err("Chat history index tail is not contiguous".into());
+                }
+                cache.apply(sequence, event)?;
+                cache.head = sequence;
+            }
+        }
+        Ok(cache)
     }
-    let mut entries = BTreeMap::<String, IndexedChat>::new();
-    let mut selected = None::<StableId>;
-    for (offset, event) in events.into_iter().enumerate() {
+
+    pub(crate) fn load(
+        &self,
+        store: &LocalHistoryStore,
+    ) -> Result<Option<HistoryIndexState>, String> {
+        let cache = self.read(store)?;
+        if cache.head == 0 {
+            return Ok(None);
+        }
+        cache.snapshot().map(Some)
+    }
+
+    pub(crate) fn replay(
+        &self,
+        store: &LocalHistoryStore,
+        command_id: &str,
+        command_hash: &str,
+    ) -> Result<Option<UiCommandReceipt>, String> {
+        let cache = self.read(store)?;
+        let Some(receipt) = cache.receipts.get(command_id) else {
+            return Ok(None);
+        };
+        if receipt.hash.as_deref() != Some(command_hash) {
+            return Err("desktop command ID was reused with different content".into());
+        }
+        let current_version = receipt
+            .result_head
+            .ok_or("committed Chat history receipt is incomplete")?;
+        Ok(Some(UiCommandReceipt {
+            command_id: command_id.to_owned(),
+            accepted: true,
+            current_version,
+            reason: None,
+            credential_mutation: None,
+        }))
+    }
+}
+
+impl IndexCache {
+    /// Apply one immutable navigation fact, retaining the first receipt per command.
+    fn apply(&mut self, sequence: u64, event: Event) -> Result<(), String> {
         let chat_id = event
             .payload
             .get("chatId")
@@ -110,29 +198,31 @@ pub(crate) fn load(store: &LocalHistoryStore) -> Result<Option<HistoryIndexState
                     .map(|value| StableId::parse(value.to_owned()))
                     .transpose()
                     .map_err(|_| "stored Chat fork parent is invalid".to_owned())?;
-                entries.entry(chat_id.to_string()).or_insert(IndexedChat {
-                    chat_id: chat_id.clone(),
-                    run_id,
-                    created_at,
-                    parent_chat_id,
-                    pinned: false,
-                    deleted: false,
-                    ordinal: u64::try_from(offset)
-                        .map_err(|_| "Chat history index is exhausted".to_owned())?,
-                    summary: optional_summary(&event.payload),
-                });
-                selected = Some(chat_id);
+                self.entries
+                    .entry(chat_id.to_string())
+                    .or_insert(IndexedChat {
+                        chat_id: chat_id.clone(),
+                        run_id,
+                        created_at,
+                        parent_chat_id,
+                        pinned: false,
+                        deleted: false,
+                        ordinal: sequence - 1,
+                        summary: optional_summary(&event.payload),
+                    });
+                self.selected = Some(chat_id);
             }
             "history.chat-selected" => {
                 let chat_id = chat_id
                     .ok_or_else(|| "stored Chat selection is missing its Chat ID".to_owned())?;
-                let entry = entries
+                let entry = self
+                    .entries
                     .get(chat_id.as_str())
                     .ok_or_else(|| "stored Chat selection targets an unknown Chat".to_owned())?;
                 if entry.deleted {
                     return Err("stored Chat selection targets a deleted Chat".into());
                 }
-                selected = Some(chat_id);
+                self.selected = Some(chat_id);
             }
             "history.chat-pin-changed" => {
                 let chat_id =
@@ -142,7 +232,8 @@ pub(crate) fn load(store: &LocalHistoryStore) -> Result<Option<HistoryIndexState
                     .get("pinned")
                     .and_then(Value::as_bool)
                     .ok_or_else(|| "stored pin change is missing its state".to_owned())?;
-                let entry = entries
+                let entry = self
+                    .entries
                     .get_mut(chat_id.as_str())
                     .ok_or_else(|| "stored pin change targets an unknown Chat".to_owned())?;
                 entry.pinned = pinned;
@@ -150,7 +241,8 @@ pub(crate) fn load(store: &LocalHistoryStore) -> Result<Option<HistoryIndexState
             "history.chat-deleted" => {
                 let chat_id = chat_id
                     .ok_or_else(|| "stored Chat deletion is missing its Chat ID".to_owned())?;
-                let entry = entries
+                let entry = self
+                    .entries
                     .get_mut(chat_id.as_str())
                     .ok_or_else(|| "stored Chat deletion targets an unknown Chat".to_owned())?;
                 entry.deleted = true;
@@ -159,7 +251,8 @@ pub(crate) fn load(store: &LocalHistoryStore) -> Result<Option<HistoryIndexState
             "history.chat-summary-updated" => {
                 let chat_id = chat_id
                     .ok_or_else(|| "stored Chat summary is missing its Chat ID".to_owned())?;
-                let entry = entries
+                let entry = self
+                    .entries
                     .get_mut(chat_id.as_str())
                     .ok_or_else(|| "stored Chat summary targets an unknown Chat".to_owned())?;
                 // Summary bytes are explicitly rebuildable. Invalid or older
@@ -173,27 +266,46 @@ pub(crate) fn load(store: &LocalHistoryStore) -> Result<Option<HistoryIndexState
                 ));
             }
         }
+        if let Some(command_id) = event.payload.get("commandId").and_then(Value::as_str) {
+            self.receipts
+                .entry(command_id.to_owned())
+                .or_insert_with(|| StoredReceipt {
+                    hash: event
+                        .payload
+                        .get("commandHash")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    result_head: event.payload.get("resultHead").and_then(Value::as_u64),
+                });
+        }
+        Ok(())
     }
-    let selected_chat_id = selected
-        .filter(|chat_id| {
-            entries
-                .get(chat_id.as_str())
-                .is_some_and(|entry| !entry.deleted)
+
+    fn snapshot(&self) -> Result<HistoryIndexState, String> {
+        let selected_chat_id = self
+            .selected
+            .as_ref()
+            .filter(|chat_id| {
+                self.entries
+                    .get(chat_id.as_str())
+                    .is_some_and(|entry| !entry.deleted)
+            })
+            .or_else(|| {
+                self.entries
+                    .values()
+                    .filter(|entry| !entry.deleted)
+                    .max_by_key(|entry| entry.ordinal)
+                    .map(|entry| &entry.chat_id)
+            })
+            .ok_or_else(|| "Chat history index has no selectable Chat".to_owned())?
+            .clone();
+        let mut entries = self.entries.values().cloned().collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.ordinal);
+        Ok(HistoryIndexState {
+            entries,
+            selected_chat_id,
         })
-        .or_else(|| {
-            entries
-                .values()
-                .filter(|entry| !entry.deleted)
-                .max_by_key(|entry| entry.ordinal)
-                .map(|entry| entry.chat_id.clone())
-        })
-        .ok_or_else(|| "Chat history index has no selectable Chat".to_owned())?;
-    let mut entries = entries.into_values().collect::<Vec<_>>();
-    entries.sort_by_key(|entry| entry.ordinal);
-    Ok(Some(HistoryIndexState {
-        entries,
-        selected_chat_id,
-    }))
+    }
 }
 
 /// Appends rebuildable summary rows in bounded batches. These facts never
@@ -206,8 +318,7 @@ pub(crate) fn append_summaries(
     if summaries.is_empty() {
         return Ok(());
     }
-    let mut expected_head = u64::try_from(events(store)?.len())
-        .map_err(|_| "Chat history index sequence is exhausted".to_owned())?;
+    let mut expected_head = head(store)?;
     for chunk in summaries.chunks(64) {
         let projected = chunk
             .iter()
@@ -252,13 +363,14 @@ pub(crate) fn append_summaries(
 /// Initializes an empty index in bounded batches. Creation order also defines
 /// the selected Chat, so no separate final selection event is required.
 pub(crate) fn initialize(
+    index: &HistoryIndex,
     store: &LocalHistoryStore,
     chats: &[(StableId, StableId, String)],
 ) -> Result<(), String> {
     if chats.is_empty() {
         return Err("Chat history initialization requires at least one Chat".into());
     }
-    let state = load(store)?;
+    let state = index.load(store)?;
     let missing = chats
         .iter()
         .filter(|(chat_id, _, _)| {
@@ -270,8 +382,7 @@ pub(crate) fn initialize(
     if missing.is_empty() {
         return Ok(());
     }
-    let mut expected_head = u64::try_from(events(store)?.len())
-        .map_err(|_| "Chat history index sequence is exhausted".to_owned())?;
+    let mut expected_head = head(store)?;
     for chunk in missing.chunks(64) {
         let events = chunk
             .iter()
@@ -314,34 +425,6 @@ pub(crate) fn initialize(
     Ok(())
 }
 
-pub(crate) fn replay(
-    store: &LocalHistoryStore,
-    command_id: &str,
-    command_hash: &str,
-) -> Result<Option<UiCommandReceipt>, String> {
-    for event in events(store)? {
-        if event.payload.get("commandId").and_then(Value::as_str) != Some(command_id) {
-            continue;
-        }
-        if event.payload.get("commandHash").and_then(Value::as_str) != Some(command_hash) {
-            return Err("desktop command ID was reused with different content".into());
-        }
-        let current_version = event
-            .payload
-            .get("resultHead")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| "committed Chat history receipt is incomplete".to_owned())?;
-        return Ok(Some(UiCommandReceipt {
-            command_id: command_id.to_owned(),
-            accepted: true,
-            current_version,
-            reason: None,
-            credential_mutation: None,
-        }));
-    }
-    Ok(None)
-}
-
 /// Appends one version-fenced history mutation and stores the resulting active
 /// Chat head in the idempotent receipt metadata.
 pub(crate) fn append_command(
@@ -354,9 +437,7 @@ pub(crate) fn append_command(
     if facts.is_empty() {
         return Err("Chat history command requires at least one fact".into());
     }
-    let existing = events(store)?;
-    let expected_head = u64::try_from(existing.len())
-        .map_err(|_| "Chat history index sequence is exhausted".to_owned())?;
+    let expected_head = head(store)?;
     let events = facts
         .into_iter()
         .enumerate()

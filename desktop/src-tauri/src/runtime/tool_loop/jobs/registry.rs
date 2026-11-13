@@ -6,7 +6,8 @@
 //! captured output cursor, keep/stop/input control surface and completion
 //! barrier, so the model observes and controls them through the same tools.
 use aworkit_capability_host::{
-    CancellationToken, ProcessOutputCursor, ProcessSession, ProcessSnapshot, ProcessSpecV1,
+    CancellationToken, ProcessOutput, ProcessOutputCursor, ProcessSession, ProcessSnapshot,
+    ProcessSpecV1,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -238,56 +239,47 @@ impl JobRegistry {
             let Some(runner) = entry.runner.clone() else {
                 continue;
             };
-            match runner {
+            let (snapshot, child) = match runner {
                 Runner::Process(session) => {
                     if entry.cancellation.is_cancelled() {
                         session.stop();
                     }
-                    let snapshot = session.snapshot().map_err(err)?;
-                    let settled = entry.record.snapshot.running && !snapshot.running;
-                    entry.record.snapshot = snapshot;
-                    if settled {
-                        save(connection, &entry.record)?;
-                    }
-                    if !entry.record.snapshot.running {
-                        // Release the stdin sender and native session once the
-                        // immutable files and terminal facts are sufficient.
-                        entry.runner = None;
-                    }
+                    (session.snapshot().map_err(err)?, None)
                 }
                 Runner::Child(handle) => {
                     if entry.cancellation.is_cancelled() {
                         handle.cancel();
                     }
-                    let (running, error, child, elapsed_ms, stdout_bytes, stderr_bytes) = {
-                        let live = handle.state.lock().map_err(err)?;
-                        (
-                            live.running,
-                            live.error.clone(),
-                            live.child.clone(),
-                            live.started
-                                .map_or(0, |start| start.elapsed().as_millis() as u64),
-                            std::fs::metadata(handle.directory.join("stdout.log"))
-                                .map_or(0, |m| m.len()),
-                            std::fs::metadata(handle.directory.join("stderr.log"))
-                                .map_or(0, |m| m.len()),
-                        )
+                    let live = handle.state.lock().map_err(err)?;
+                    let snapshot = ProcessSnapshot {
+                        running: live.running,
+                        error: live.error.clone(),
+                        elapsed_ms: live
+                            .started
+                            .map_or(0, |start| start.elapsed().as_millis() as u64),
+                        stdout_bytes: std::fs::metadata(handle.directory.join("stdout.log"))
+                            .map_or(0, |m| m.len()),
+                        stderr_bytes: std::fs::metadata(handle.directory.join("stderr.log"))
+                            .map_or(0, |m| m.len()),
+                        ..entry.record.snapshot.clone()
                     };
-                    let settled = entry.record.snapshot.running && !running;
-                    entry.record.snapshot.running = running;
-                    entry.record.snapshot.elapsed_ms = elapsed_ms;
-                    entry.record.snapshot.stdout_bytes = stdout_bytes;
-                    entry.record.snapshot.stderr_bytes = stderr_bytes;
-                    if settled {
-                        entry.record.snapshot.error = error;
-                        entry.record.child = child;
-                        save(connection, &entry.record)?;
-                    }
-                    if !running {
-                        entry.runner = None;
-                    }
+                    (snapshot, live.child.clone())
                 }
+            };
+            if snapshot.running {
+                entry.record.snapshot = snapshot;
+                continue;
             }
+            let mut record = entry.record.clone();
+            record.snapshot = snapshot;
+            if record.kind == JobKind::Subagent {
+                record.child = child;
+            }
+            // Keep the runner attached until the terminal state is durable, so
+            // a failed save can be retried on the next refresh.
+            save(connection, &record)?;
+            entry.record = record;
+            entry.runner = None;
         }
         Ok(())
     }
@@ -514,13 +506,15 @@ impl JobRegistry {
         let stdout_size = std::fs::metadata(&stdout_path).map_or(0, |m| m.len());
         let stderr_size = std::fs::metadata(&stderr_path).map_or(0, |m| m.len());
         if cursor.stdout > stdout_size || cursor.stderr > stderr_size {
-            return Err("output cursor exceeds captured output".into());
+            return Err(
+                "output cursor exceeds captured output. Omit cursor to read new output from the last acknowledged position, or reuse a cursor returned for this job."
+                    .into(),
+            );
         }
-        let (snapshot, stdout, stderr, next, more) = if let Some(Runner::Process(session)) = runner {
-            let out = session
+        let output = if let Some(Runner::Process(session)) = runner {
+            session
                 .output(cursor, maximum, wait, cancellation)
-                .map_err(err)?;
-            (out.snapshot, out.stdout, out.stderr, out.next, out.more)
+                .map_err(err)?
         } else {
             // A delegated child writes progress to the same captured logs, so a
             // soft wait and a cursor read behave exactly like a process job.
@@ -562,22 +556,53 @@ impl JobRegistry {
                 stderr: cursor.stderr + stderr.len() as u64,
             };
             let snapshot = ProcessSnapshot {
-                stdout_bytes: stdout_size,
-                stderr_bytes: stderr_size,
-                ..record.snapshot.clone()
+                stdout_bytes: std::fs::metadata(&stdout_path).map_or(0, |m| m.len()),
+                stderr_bytes: std::fs::metadata(&stderr_path).map_or(0, |m| m.len()),
+                ..record.snapshot
             };
             let more = next.stdout < snapshot.stdout_bytes || next.stderr < snapshot.stderr_bytes;
-            (snapshot, stdout, stderr, next, more)
+            ProcessOutput {
+                snapshot,
+                stdout,
+                stderr,
+                next,
+                more,
+            }
         };
-        let mut state = self.state.lock().map_err(err)?;
-        let entry = state.entries.get_mut(id).ok_or("job unavailable")?;
-        entry.record.snapshot = snapshot.clone();
+        self.output_result(owner, id, &directory, output)
+    }
+
+    /// Render a captured read without changing lifecycle state. The supervisor
+    /// may have persisted the exit and detached the runner while we read logs.
+    fn output_result(
+        &self,
+        owner: &str,
+        id: &str,
+        directory: &Path,
+        output: ProcessOutput,
+    ) -> Result<Value, String> {
+        let state = self.state.lock().map_err(err)?;
+        let entry = owned(&state, owner, id)?;
         let record = entry.record.clone();
         let live = match &entry.runner {
             Some(Runner::Child(handle)) => handle.progress_value(),
             _ => None,
         };
         drop(state);
+        let ProcessOutput {
+            snapshot,
+            stdout,
+            stderr,
+            next,
+            more,
+        } = output;
+        let (snapshot, more) = if snapshot.running && !record.snapshot.running {
+            let terminal = record.snapshot.clone();
+            let more = next.stdout < terminal.stdout_bytes || next.stderr < terminal.stderr_bytes;
+            (terminal, more)
+        } else {
+            (snapshot, more)
+        };
         Ok(json!({
             "jobId":id,
             "kind":record.kind,
@@ -769,12 +794,23 @@ impl JobRegistry {
         };
         let cursor: ProcessOutputCursor = serde_json::from_value(cursor.clone()).map_err(err)?;
         let mut state = self.state.lock().map_err(err)?;
-        owned(&state, owner, id)?;
-        let entry = state.entries.get_mut(id).ok_or("job unavailable")?;
-        entry.record.cursor = cursor;
-        entry.record.collected = value["running"] == false && value["moreOutput"] == false;
-        let record = entry.record.clone();
-        save(&state.connection, &record)
+        let State {
+            connection,
+            entries,
+        } = &mut *state;
+        let entry = entries
+            .get_mut(id)
+            .filter(|entry| entry.record.owner == owner)
+            .ok_or("job does not exist in this Chat")?;
+        let mut record = entry.record.clone();
+        // Parallel or explicit rereads may finish in a different order. A
+        // committed result can advance collection, but never undo it.
+        record.cursor.stdout = record.cursor.stdout.max(cursor.stdout);
+        record.cursor.stderr = record.cursor.stderr.max(cursor.stderr);
+        record.collected |= value["running"] == false && value["moreOutput"] == false;
+        save(connection, &record)?;
+        entry.record = record;
+        Ok(())
     }
 
     pub fn list_scoped(&self, owner: &str, scope: Option<&str>) -> Result<Value, String> {
@@ -1042,8 +1078,57 @@ fn err(error: impl std::fmt::Display) -> String {
 }
 
 #[cfg(test)]
-mod child_tests {
+mod tests {
     use super::*;
+
+    #[test]
+    fn read_captured_before_exit_cannot_restore_running_or_undo_collection() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = JobRegistry::open(root.path().join("jobs")).unwrap();
+        let token = CancellationToken::default();
+        let (finish, resume) = std::sync::mpsc::channel();
+        let owner = "chat.race";
+        let id = registry
+            .start_child_scoped(owner, "invocation.race", None, "child.race", token.clone(), move |handle, _| {
+                resume.recv().map_err(err)?;
+                handle.progress("final output", json!({"status":"running"}));
+                Ok(json!({"status":"completed"}))
+            })
+            .unwrap();
+        // Capture a read, then force settlement before the read builds its reply.
+        let snapshot = {
+            let state = registry.state.lock().unwrap();
+            owned(&state, owner, &id).unwrap().record.snapshot.clone()
+        };
+        assert!(snapshot.running);
+        let captured = ProcessOutput {
+            snapshot,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            next: ProcessOutputCursor::default(),
+            more: false,
+        };
+        finish.send(()).unwrap();
+        registry.await_terminal(owner, &id).unwrap();
+        let late = registry
+            .output_result(owner, &id, &registry.root.join(&id), captured)
+            .unwrap();
+        assert_eq!(late["status"], "completed");
+        assert_eq!(late["moreOutput"], true);
+
+        let final_read = registry
+            .output(owner, &id, None, 65536, Duration::ZERO, &token)
+            .unwrap();
+        assert_eq!(final_read["stdout"], "final output\n");
+        assert_eq!(final_read["running"], false);
+        assert_eq!(final_read["moreOutput"], false);
+        registry.acknowledge(owner, &final_read).unwrap();
+        registry.acknowledge(owner, &late).unwrap();
+        assert!(registry.completion_notice(owner).unwrap().is_none());
+        let jobs = registry.list_scoped(owner, None).unwrap();
+        assert_eq!(jobs["jobs"][0]["status"], "completed");
+        assert_eq!(jobs["jobs"][0]["cursor"], final_read["cursor"]);
+    }
 
     #[test]
     fn a_child_runner_is_a_job_and_reports_live_then_terminal_state() {

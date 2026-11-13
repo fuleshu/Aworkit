@@ -17,7 +17,7 @@ use super::dto::{
     ChatHistoryEntryDto, ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, UiCommandInput,
     UiCommandReceipt,
 };
-use super::history_index::{self, ChatSummaryProjection, HistoryIndexState, IndexedChat};
+use super::history_index::{self, ChatSummaryProjection, HistoryIndex, HistoryIndexState, IndexedChat};
 use super::project_scope::{FrozenProjectScopeV1, validate_frozen_project_scope};
 use super::semantic_events::{
     CommittedChatEventPort, CoreEventEnvelope, SemanticEventCommitter, SemanticEventDraft,
@@ -123,9 +123,7 @@ pub(crate) struct FrozenToolBindingV1 {
     pub tool_snapshot: BuiltInToolConfigurationV2,
     /// Opaque credential-lease metadata frozen with the tool. Values remain
     /// solely in the operating-system credential store and are never part of
-    /// Chat history. The durable field deliberately avoids a secret-bearing
-    /// name so the semantic-history guard can continue rejecting actual
-    /// credential material without rejecting these permitted references.
+    /// Chat history. Keep the durable field name stable for stored records.
     #[serde(
         default,
         rename = "opaqueBindings",
@@ -338,6 +336,8 @@ pub(crate) struct ChatHistory {
     store: LocalHistoryStore,
     bound_identity: Option<ChatIdentityV1>,
     metadata_lock: Arc<Mutex<()>>,
+    navigation: Arc<HistoryIndex>,
+    sessions: Arc<Mutex<StreamCache>>,
     committed_events: Arc<dyn CommittedChatEventPort>,
     /// Validated view of the selected Chat's stream.
     ///
@@ -358,6 +358,8 @@ impl ChatHistory {
             store,
             bound_identity: None,
             metadata_lock: Arc::new(Mutex::new(())),
+            navigation: Arc::default(),
+            sessions: Arc::default(),
             committed_events,
             stream: Arc::new(Mutex::new(StreamCache::default())),
             streams: Arc::new(StreamCaches::default()),
@@ -416,7 +418,7 @@ impl ChatHistory {
         command_id: &str,
         command_hash: &str,
     ) -> Result<Option<UiCommandReceipt>, String> {
-        if let Some(receipt) = history_index::replay(&self.store, command_id, command_hash)? {
+        if let Some(receipt) = self.replay_navigation(command_id, command_hash)? {
             return Ok(Some(receipt));
         }
         for event in self.events()?.iter() {
@@ -446,7 +448,7 @@ impl ChatHistory {
         command_id: &str,
         command_hash: &str,
     ) -> Result<Option<UiCommandReceipt>, String> {
-        history_index::replay(&self.store, command_id, command_hash)
+        self.navigation.replay(&self.store, command_id, command_hash)
     }
 
     /// Commits the terminal facts of one Chat command under its own
@@ -815,19 +817,19 @@ impl ChatHistory {
         &self,
         chat_id: &StableId,
     ) -> Result<Option<FrozenChatExecutionRecordV1>, String> {
-        for event in self.session_events()? {
+        for event in self.session_events()?.iter() {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
             }
-            let Some(value) = event.payload.get("record").cloned() else {
+            let Some(value) = event.payload.get("record") else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
             // The Chat identity is read from the stored bytes, so an unrelated
             // record this build cannot read is never decoded on this path.
-            if stored_record_chat_id(&value) != Some(chat_id.as_str()) {
+            if stored_record_chat_id(value) != Some(chat_id.as_str()) {
                 continue;
             }
-            let record = decode_stored_frozen_context_record(value)?;
+            let record = decode_stored_frozen_context_record(value.clone())?;
             return Ok(Some(record));
         }
         Ok(None)
@@ -838,17 +840,17 @@ impl ChatHistory {
         history_head: u64,
     ) -> Result<Option<FrozenChatExecutionRecordV1>, String> {
         let selected_chat_id = self.selected_identity()?.chat_id;
-        for event in self.session_events()?.into_iter().rev() {
+        for event in self.session_events()?.iter().rev() {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
             }
-            let Some(value) = event.payload.get("record").cloned() else {
+            let Some(value) = event.payload.get("record") else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
             // Select from the stored bytes before decoding: only the selected
             // Chat's record at this head is read, and an unrelated unreadable
             // record cannot fail the read.
-            if stored_record_chat_id(&value) != Some(selected_chat_id.as_str())
+            if stored_record_chat_id(value) != Some(selected_chat_id.as_str())
                 || value
                     .get("context")
                     .and_then(|context| context.get("historyBaseHead"))
@@ -857,7 +859,7 @@ impl ChatHistory {
             {
                 continue;
             }
-            let record = decode_stored_frozen_context_record(value)?;
+            let record = decode_stored_frozen_context_record(value.clone())?;
             return Ok(Some(record));
         }
         Ok(None)
@@ -879,54 +881,49 @@ impl ChatHistory {
                 &SETTLING_COMMAND_FACT_KINDS,
             )
             .map_err(|e| e.to_string())?;
-        // Decode the profile-level session aggregate exactly once. The former
-        // nested lookup reopened and revalidated every frozen context for each
-        // staged command, making every history selection quadratic in the
-        // number of past commands and contexts.
+        // Read the shared session facts and validate only this Chat's records.
+        // The other context hashes distinguish unrelated commands from missing evidence.
         let session_events = self.session_events()?;
         let mut contexts = Vec::new();
-        let mut contexts_by_hash = BTreeMap::new();
+        let mut context_hashes = BTreeSet::new();
         let mut unrelated_context_hashes = BTreeSet::new();
-        for event in &session_events {
+        for event in session_events.iter() {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
             }
-            let Some(value) = event.payload.get("record").cloned() else {
+            let Some(value) = event.payload.get("record") else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
             // Another Chat's record is remembered by hash only, so an
             // unreadable record this Chat does not use is never decoded.
-            if stored_record_chat_id(&value) != Some(selected_chat_id.as_str()) {
-                if let Some(hash) = stored_record_context_hash(&value) {
-                    unrelated_context_hashes.insert(hash.to_owned());
+            if stored_record_chat_id(value) != Some(selected_chat_id.as_str()) {
+                if let Some(hash) = stored_record_context_hash(value) {
+                    unrelated_context_hashes.insert(hash);
                 }
                 continue;
             }
-            let context = decode_stored_frozen_context_record(value)?;
-            contexts_by_hash.insert(context.context_hash.clone(), context.clone());
+            let context = decode_stored_frozen_context_record(value.clone())?;
+            context_hashes.insert(context.context_hash.clone());
             contexts.push(context);
         }
         for event in session_events.iter().rev() {
             if event.kind != "chat.effect-command-staged" {
                 continue;
             }
-            let Some(value) = event.payload.get("record").cloned() else {
+            let Some(value) = event.payload.get("record") else {
                 return Err("stored pending Chat command is incomplete".into());
             };
-            let record: PendingChatCommandV1 = serde_json::from_value(value)
-                .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
-            validate_pending_command_record(&record)?;
-            let Some(context) = contexts_by_hash.get(&record.frozen_context_hash) else {
-                // A staged command for another Chat: its context was filtered
-                // out, and missing evidence for this Chat stays a failure.
-                if unrelated_context_hashes.contains(&record.frozen_context_hash) {
+            let hash = value.get("frozenContextHash").and_then(Value::as_str)
+                .ok_or("stored pending Chat command is invalid")?;
+            if !context_hashes.contains(hash) {
+                if unrelated_context_hashes.contains(hash) {
                     continue;
                 }
                 return Err("stored pending Chat command has no frozen context".into());
-            };
-            if context.context.identity.chat_id != selected_chat_id {
-                continue;
             }
+            let record: PendingChatCommandV1 = serde_json::from_value(value.clone())
+                .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
+            validate_pending_command_record(&record)?;
             let settled = chat_events
                 .iter()
                 .any(|event| settles_staged_command(event, record.command.command_id.as_str()));
@@ -969,11 +966,11 @@ impl ChatHistory {
             .lock()
             .map_err(|_| "Chat metadata lock unavailable")?;
         validate_pending_command_record(&record)?;
-        for event in self.session_events()? {
+        for event in self.session_events()?.iter() {
             if event.kind != "chat.effect-command-staged" {
                 continue;
             }
-            let Some(value) = event.payload.get("record").cloned() else {
+            let Some(value) = event.payload.get("record") else {
                 return Err("stored pending Chat command is incomplete".into());
             };
             // Only a record naming this exact command can collide with it, so an
@@ -983,7 +980,7 @@ impl ChatHistory {
             {
                 continue;
             }
-            let existing: PendingChatCommandV1 = serde_json::from_value(value)
+            let existing: PendingChatCommandV1 = serde_json::from_value(value.clone())
                 .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
             validate_pending_command_record(&existing)?;
             if existing.command.command_id == record.command.command_id {
@@ -994,9 +991,7 @@ impl ChatHistory {
                 };
             }
         }
-        let existing_events = self.session_events()?;
-        let expected_head = u64::try_from(existing_events.len())
-            .map_err(|_| "pending Chat command sequence is exhausted".to_owned())?;
+        let expected_head = self.session_head()?;
         let event_id = format!(
             "event.command.{}",
             record.command_hash.trim_start_matches("sha256:")
@@ -1052,9 +1047,7 @@ impl ChatHistory {
                 Err("Chat identity was reused with different frozen execution context".into())
             };
         }
-        let existing_events = self.session_events()?;
-        let expected_head = u64::try_from(existing_events.len())
-            .map_err(|_| "frozen Chat context sequence is exhausted".to_owned())?;
+        let expected_head = self.session_head()?;
         let event_id = format!(
             "event.session.{}",
             record.context_hash.trim_start_matches("sha256:")
@@ -1096,9 +1089,7 @@ impl ChatHistory {
             .metadata_lock
             .lock()
             .map_err(|_| "Chat metadata lock unavailable")?;
-        let existing_events = self.session_events()?;
-        let expected_head = u64::try_from(existing_events.len())
-            .map_err(|_| "frozen Chat context sequence is exhausted".to_owned())?;
+        let expected_head = self.session_head()?;
         self.store
             .commit(&CommitBatch {
                 chat_id: SESSION_AGGREGATE_ID.into(),
@@ -1124,12 +1115,13 @@ impl ChatHistory {
             .events(CHAT_ID, BRANCH_ID)
             .map_err(|error| format!("cannot inspect legacy desktop Chat history: {error}"))?;
         if legacy_events.is_empty() {
-            if history_index::load(&self.store)?.is_some() {
+            if self.navigation.load(&self.store)?.is_some() {
                 return Ok(());
             }
             let identity =
                 identity_for_seed(&format!("initial-chat:{}", data_root.to_string_lossy()))?;
             return history_index::initialize(
+                &self.navigation,
                 &self.store,
                 &[(identity.chat_id, identity.run_id, now_label())],
             );
@@ -1145,7 +1137,7 @@ impl ChatHistory {
                 .unwrap_or_else(now_label);
             chats.push((identity.chat_id, identity.run_id, created_at));
         }
-        history_index::initialize(&self.store, &chats)
+        history_index::initialize(&self.navigation, &self.store, &chats)
     }
 
     /// One-time upgrade for history indexes created before compact sidebar
@@ -1371,7 +1363,7 @@ impl ChatHistory {
     }
 
     fn index(&self) -> Result<HistoryIndexState, String> {
-        history_index::load(&self.store)?
+        self.navigation.load(&self.store)?
             .ok_or_else(|| "Chat history index is not initialized".to_owned())
     }
 
@@ -1956,10 +1948,18 @@ impl ChatHistory {
         ))
     }
 
-    fn session_events(&self) -> Result<Vec<Event>, String> {
+    fn session_head(&self) -> Result<u64, String> {
         self.store
-            .events(SESSION_AGGREGATE_ID, BRANCH_ID)
-            .map_err(|error| format!("cannot read frozen Chat contexts: {error}"))
+            .head_sequence(SESSION_AGGREGATE_ID, BRANCH_ID)
+            .map(|head| head.unwrap_or(0))
+            .map_err(|error| format!("cannot read frozen Chat context head: {error}"))
+    }
+
+    /// Share immutable session facts across reads and load only the committed tail.
+    fn session_events(&self) -> Result<Arc<Vec<Arc<Event>>>, String> {
+        let mut sessions = self.sessions.lock().map_err(|_| "Chat session cache unavailable")?;
+        sessions.synchronize(&self.store, SESSION_AGGREGATE_ID, self.session_head()?)?;
+        Ok(sessions.decoded.events.clone())
     }
 
     /// Decodes frozen contexts once while upgrading legacy sidebar summaries.
@@ -1970,7 +1970,7 @@ impl ChatHistory {
     /// selected Chat's frozen context.
     fn frozen_contexts(&self) -> Result<BTreeMap<String, FrozenChatExecutionRecordV1>, String> {
         let mut contexts = BTreeMap::new();
-        for event in self.session_events()? {
+        for event in self.session_events()?.iter() {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
             }

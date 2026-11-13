@@ -376,7 +376,9 @@ fn mcp_working_directory_affects_frozen_transport_and_rejects_relative_paths() {
             args: vec![],
             cwd: None,
             env: vec![],
-        },
+        
+                                                     environment: Default::default(),
+                                                 },
     };
     let original = prepare_mcp_server(&server, &[]).unwrap();
     let IntegrationTransportV2::Stdio { cwd, .. } = &mut server.transport else {

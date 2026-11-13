@@ -553,7 +553,7 @@ describe("Settings configuration v2", () => {
     }
   });
 
-  it("rejects nested secret-like freeform fields conservatively", () => {
+  it("accepts application keys in nested freeform fields", () => {
     for (const key of [
       "apiKeyValue",
       "authHeader",
@@ -571,12 +571,7 @@ describe("Settings configuration v2", () => {
         manifestPath: "C:\\fixture\\extension.json",
         configuration: { public: { nested: { [key]: "must-not-persist" } } },
       }];
-      expect(settingsDraftIssues(value, {})).toContainEqual(
-        expect.objectContaining({
-          section: "extensions",
-          message: expect.stringContaining(key),
-        }),
-      );
+      expect(settingsDraftIssues(value, {})).toEqual([]);
     }
   });
 
@@ -621,7 +616,7 @@ describe("Settings configuration v2", () => {
     );
   });
 
-  it("rejects plaintext secrets in STDIO arguments and inactive runtime controls", () => {
+  it("accepts STDIO arguments and still rejects inactive runtime controls", () => {
     const value = configuration();
     value.mcpServers.push({
       id: "mcp.unsafe",
@@ -644,13 +639,12 @@ describe("Settings configuration v2", () => {
           section: "mcp",
           path: "mcpServers.mcp.unsafe.autoConnect",
         }),
-        expect.objectContaining({
-          section: "mcp",
-          message: expect.stringContaining("STDIO arguments cannot contain"),
-        }),
         expect.objectContaining({ section: "data", path: "data" }),
       ]),
     );
+    expect(
+      issues.some((issue) => issue.path.startsWith("mcpServers.mcp.unsafe.transport.args")),
+    ).toBe(false);
   });
 
   it("rejects a delegation policy the selected external-agent adapter cannot express", () => {

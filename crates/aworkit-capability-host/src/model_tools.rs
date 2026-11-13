@@ -12,7 +12,6 @@ use crate::ProviderError;
 const INVALID_TOOL_REQUEST: &str = "provider tool request is invalid";
 const INVALID_TOOL_RESPONSE: &str = "provider tool response is invalid or unsupported";
 
-const MAX_TOOL_DEFINITIONS: usize = 128;
 /// Dispatch bound for advisory runtime text (provider recovery and job notices).
 pub const MAX_RETRY_NOTICE_BYTES: usize = 4 * 1024;
 const MAX_TEXT_MESSAGES: usize = 4096;
@@ -453,14 +452,14 @@ fn validate_context_request(request: &ModelToolRequestV1) -> Result<(), Provider
     {
         return Err(invalid_tool_request());
     }
-    if request.tools.len() > MAX_TOOL_DEFINITIONS
-        || request.retry_notice.as_ref().is_some_and(|notice| {
-            notice.is_empty() || notice.len() > MAX_RETRY_NOTICE_BYTES || notice.contains('\0')
-        })
-    {
+    if request.retry_notice.as_ref().is_some_and(|notice| {
+        notice.is_empty() || notice.len() > MAX_RETRY_NOTICE_BYTES || notice.contains('\0')
+    }) {
         return Err(invalid_tool_request());
     }
 
+    // Check each definition and identity. The gateway also checks the total
+    // request size, so a large catalog needs no separate count limit here.
     let mut names = BTreeSet::new();
     let mut capabilities = BTreeSet::new();
     for tool in &request.tools {

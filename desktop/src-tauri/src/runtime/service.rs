@@ -2573,58 +2573,9 @@ impl DesktopRuntime {
         })
     }
 
-    /// What the history store holds and what a reclaim could release.
-    ///
-    /// Measured from the store itself, so Settings can state the retention policy
-    /// and its current cost without guessing or reading a single payload body.
-    ///
-    /// # Errors
-    ///
-    /// Returns a reason when the store refuses to report its own size.
-    pub fn history_store_status(&self) -> Result<super::HistoryStoreStatusV1, String> {
-        let (database, log) = self.history.file_bytes();
-        let breakdown = self
-            .history
-            .payload_breakdown()
-            .map_err(|error| error.to_string())?;
-        let superseded = super::history_retention::PRUNABLE_KINDS;
-        let (outbox_rows, outbox_delivered_rows, outbox_bytes) = self
-            .history
-            .outbox_bytes()
-            .map_err(|error| error.to_string())?;
-        let mut status = super::HistoryStoreStatusV1 {
-            store_bytes: database.saturating_add(log),
-            payload_bytes: 0,
-            snapshot_bytes: 0,
-            deleted_chats: 0,
-            deleted_chat_bytes: 0,
-            outbox_rows,
-            outbox_delivered_rows,
-            outbox_bytes,
-            retained_turns: u64::try_from(super::history_retention::RETAINED_TURNS_V1)
-                .unwrap_or(u64::MAX),
-            kinds: breakdown
-                .iter()
-                .map(|(kind, events, bytes)| super::HistoryPayloadKindV1 {
-                    kind: kind.clone(),
-                    events: *events,
-                    bytes: *bytes,
-                })
-                .collect(),
-        };
-        for (kind, _, bytes) in &breakdown {
-            status.payload_bytes = status.payload_bytes.saturating_add(*bytes);
-            if superseded.contains(&kind.as_str()) {
-                status.snapshot_bytes = status.snapshot_bytes.saturating_add(*bytes);
-            }
-        }
-        for chat_id in self.history.deleted_chat_ids()? {
-            status.deleted_chats = status.deleted_chats.saturating_add(1);
-            status.deleted_chat_bytes = status
-                .deleted_chat_bytes
-                .saturating_add(self.history.stream_payload_bytes(&chat_id)?);
-        }
-        Ok(status)
+    /// Captures the history handle so the caller can measure outside the coordinator.
+    pub fn history_store_reader(&self) -> super::HistoryStoreReader {
+        super::HistoryStoreReader { history: self.history.clone() }
     }
 
     /// Records the desktop window placement and panel separators.
@@ -2659,7 +2610,7 @@ impl DesktopRuntime {
     /// The Settings document version this preference projection was read at.
     #[must_use]
     pub fn subagent_view_version(&self) -> u64 {
-        self.settings_v2_snapshot().version
+        self.documents.settings_version()
     }
 
     /// Returns the complete secret-free Settings v2 projection.
@@ -2685,7 +2636,7 @@ impl DesktopRuntime {
             // The Settings version is the stored document version, which a
             // host-owned write such as the remembered Chat defaults also
             // advances. The editor reads it again on its next snapshot.
-            version: self.settings_snapshot().version,
+            version: self.documents.settings_version(),
             schema_version: SETTINGS_SCHEMA_VERSION_V2,
             settings: self.documents.settings().clone(),
             provider_health,
@@ -3014,7 +2965,7 @@ impl DesktopRuntime {
         if let Some(processed) = self.processed.get(&input.command_id) {
             return replay_processed(processed, &fingerprint);
         }
-        let actual_version = self.settings_v2_snapshot().version;
+        let actual_version = self.documents.settings_version();
         if input.expected_version != actual_version {
             return Err(format!(
                 "settings version conflict: expected {}, actual {actual_version}",
@@ -7559,7 +7510,9 @@ mod tests {
                 args: vec![],
                 cwd: None,
                 env: vec![],
-            },
+            
+                                                         environment: Default::default(),
+                                                     },
             tools: vec![super::super::tool_registry::McpToolConfiguration {
                 annotations: None,
                 name: "echo".into(),
@@ -7785,7 +7738,9 @@ mod tests {
                 args: vec!["app-server".into()],
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             // Handshake capabilities are exact ephemeral probe output. The
@@ -7917,7 +7872,9 @@ mod tests {
                     args: vec!["app-server".into()],
                     cwd: None,
                     env: Vec::new(),
-                },
+                
+                                                              environment: Default::default(),
+                                                          },
                 credential_bindings: Vec::new(),
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -7988,7 +7945,9 @@ mod tests {
                     args: vec!["app-server".into()],
                     cwd: None,
                     env: Vec::new(),
-                },
+                
+                                                              environment: Default::default(),
+                                                          },
                 credential_bindings: Vec::new(),
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -8061,9 +8020,7 @@ mod tests {
         let root = TempDir::new().unwrap();
         let mut runtime = runtime(&root, Arc::new(FixtureProvider::new()));
         let mut invalid = runtime.settings_v2_snapshot().settings;
-        invalid.tools[0]
-            .configuration
-            .insert("apiKey".into(), Value::from("plaintext"));
+        invalid.schema_version = 0;
         let error = runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.v2.invalid".into(),
@@ -8071,7 +8028,7 @@ mod tests {
                 settings: invalid,
             })
             .unwrap_err();
-        assert!(error.contains("secret-like field"));
+        assert!(error.contains("schemaVersion"));
         assert_eq!(runtime.settings_v2_snapshot().version, 1);
 
         let mut invented = runtime.settings_v2_snapshot().settings;
@@ -8351,7 +8308,9 @@ mod tests {
                     credential_ref: "credential.old".into(),
                     field: "api_key".into(),
                 }],
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2 {

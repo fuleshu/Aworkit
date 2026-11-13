@@ -374,7 +374,13 @@ fn fixture_mcp_input_schema() -> Value {
 /// The catalog entry saved with the server's Settings connection: what describes
 /// its tool until a call has reached the running server.
 fn fixture_mcp_saved_schema() -> Value {
-    json!({"type":"object"})
+    json!({
+        "type": "object",
+        "properties": {
+            "secrets": {"type": "array", "items": {"type": "string"}},
+            "remote": {"type": "object", "properties": {"token": {"type": "string"}}}
+        }
+    })
 }
 
 /// The discovery snapshot the fixture MCP server hands back: one read-only tool
@@ -435,7 +441,9 @@ fn configure_mcp_chat(core: &mut DesktopRuntime) {
             args: vec![],
             cwd: None,
             env: vec![],
-        },
+        
+                                                     environment: Default::default(),
+                                                 },
         tools: vec![crate::runtime::tool_registry::McpToolConfiguration {
             annotations: None,
             name: "echo".into(),

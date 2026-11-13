@@ -473,9 +473,7 @@ pub(crate) struct StoredFileToolBindingV1 {
     #[serde(deserialize_with = "deserialize_stored_file_tool_limit")]
     pub limit: StoredFileToolLimitV1,
     /// Secret-free lease metadata used only to materialize one invocation.
-    /// The durable field name deliberately remains neutral so semantic
-    /// history can reject actual `secret` payloads without rejecting this
-    /// permitted opaque reference.
+    /// Keep the durable field name stable for stored records.
     #[serde(
         default,
         rename = "opaqueBinding",
@@ -563,7 +561,7 @@ pub(crate) enum StoredFileToolLimitV1 {
         backend: String,
         /// Absolute executable of the installed product.
         executable: String,
-        /// Fixed adapter arguments, secret-free by Settings validation.
+        /// Fixed adapter arguments from Settings.
         arguments: Vec<String>,
         /// Working directory fixed by the target, when it sets one. Absent
         /// falls back to the Chat's frozen workspace.
@@ -763,6 +761,24 @@ pub(crate) fn implied_job_control_ids(bound: &[String]) -> Vec<&'static str> {
         jobs::LIST,
         jobs::KEEP,
     ]
+}
+
+/// Offer the controls already frozen for any host shell or Python tool on this node.
+pub(crate) fn extend_implied_job_controls(
+    node_tools: &mut Vec<StoredFileToolBindingV1>,
+    frozen_tools: &[StoredFileToolBindingV1],
+) {
+    let bound = node_tools
+        .iter()
+        .map(|tool| tool.capability_id.clone())
+        .collect::<Vec<_>>();
+    for implied in implied_job_control_ids(&bound) {
+        if !bound.iter().any(|id| id == implied)
+            && let Some(binding) = frozen_tools.iter().find(|tool| tool.capability_id == implied)
+        {
+            node_tools.push(binding.clone());
+        }
+    }
 }
 
 pub(crate) fn file_tool_descriptors()
@@ -1121,10 +1137,6 @@ pub(crate) fn comfyui_tool_descriptor(
 }
 
 /// One resolved external-agent delegation target, frozen with the Chat.
-///
-/// Values are secret-free by construction: Settings refuses secret-like STDIO
-/// arguments, and credential-backed environment values are rejected at freeze
-/// rather than silently omitted.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ResolvedExternalAgentTargetV1 {

@@ -1,9 +1,7 @@
 //! Shared fail-closed redaction for noncanonical local evidence.
 //!
 //! Invocation secret values are replaced before bytes enter a persistence
-//! queue. Structured fields known to carry credentials are rejected entirely:
-//! retaining the field with a placeholder would still make it too easy for a
-//! future serializer change to persist the original value by mistake.
+//! queue. A caller can explicitly exclude fields from its own capture policy.
 
 use std::{
     collections::BTreeSet,
@@ -53,7 +51,7 @@ impl Default for RedactionSet {
             generation: 0,
             identity: Arc::from(new_identity()),
             secret_values: Arc::new(Vec::new()),
-            forbidden_fields: Arc::new(default_forbidden_fields()),
+            forbidden_fields: Arc::new(BTreeSet::new()),
         }
     }
 }
@@ -62,7 +60,7 @@ impl RedactionSet {
     /// Builds one bounded invocation redaction set.
     ///
     /// Field names are matched case-insensitively after `-` is normalized to
-    /// `_`; the built-in denylist is always retained.
+    /// `_` for fields explicitly excluded by the caller.
     ///
     /// # Errors
     ///
@@ -94,13 +92,10 @@ impl RedactionSet {
             .sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
         secret_values.dedup();
 
-        let mut fields = default_forbidden_fields();
+        let mut fields = BTreeSet::new();
         for field in forbidden_fields {
             let normalized = normalize_field(&field)?;
             fields.insert(normalized);
-        }
-        if fields.len() > MAX_FORBIDDEN_FIELDS {
-            return Err(RedactionError::TooManyForbiddenFields);
         }
         Ok(Self {
             generation,
@@ -136,7 +131,10 @@ impl RedactionSet {
     pub fn redact_payload(&self, payload: &[u8]) -> Result<RedactedPayload, RedactionError> {
         let text = std::str::from_utf8(payload).map_err(|_| RedactionError::UnsupportedBinary)?;
         match serde_json::from_str::<Value>(text) {
-            Ok(json) => self.reject_forbidden_json_fields(&json)?,
+            Ok(json) if !self.forbidden_fields.is_empty() => {
+                self.reject_forbidden_json_fields(&json)?;
+            }
+            Ok(_) => {}
             Err(_) if matches!(text.trim_start().as_bytes().first(), Some(b'{' | b'[')) => {
                 return Err(RedactionError::MalformedStructuredPayload);
             }
@@ -363,27 +361,6 @@ fn normalized_field_text(value: &str) -> String {
     normalized
 }
 
-fn default_forbidden_fields() -> BTreeSet<String> {
-    [
-        "authorization",
-        "proxy_authorization",
-        "api_key",
-        "apikey",
-        "access_token",
-        "refresh_token",
-        "client_secret",
-        "password",
-        "secret",
-        "secret_value",
-        "secret_lease",
-        "credential_value",
-        "environment_secret",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
-}
-
 fn new_identity() -> String {
     let sequence = SET_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let timestamp = SystemTime::now()
@@ -415,10 +392,15 @@ mod tests {
     }
 
     #[test]
-    fn denies_known_secret_fields_in_json_and_text() {
-        let set = RedactionSet::default();
+    fn denies_explicitly_excluded_fields_in_json_and_text() {
+        let payload = br#"{"authorization":"Bearer value"}"#;
+        assert_eq!(
+            RedactionSet::default().redact_payload(payload).unwrap().as_bytes(),
+            payload
+        );
+        let set = RedactionSet::new(1, vec![], vec!["authorization".into()]).unwrap();
         assert!(matches!(
-            set.redact_payload(br#"{"authorization":"Bearer value"}"#),
+            set.redact_payload(payload),
             Err(RedactionError::ForbiddenField(_))
         ));
         assert!(matches!(
@@ -441,8 +423,8 @@ mod tests {
     }
 
     #[test]
-    fn protocol_headers_inside_json_strings_are_rejected() {
-        let set = RedactionSet::default();
+    fn explicitly_excluded_protocol_headers_inside_json_strings_are_rejected() {
+        let set = RedactionSet::new(1, vec![], vec!["authorization".into()]).unwrap();
         assert!(matches!(
             set.redact_payload(br#"{"message":"Authorization: Bearer unknown"}"#),
             Err(RedactionError::ForbiddenField(_))
@@ -451,7 +433,9 @@ mod tests {
 
     #[test]
     fn camel_case_credential_fields_are_normalized_before_matching() {
-        let set = RedactionSet::default();
+        let set =
+            RedactionSet::new(1, vec![], vec!["access_token".into(), "client_secret".into()])
+                .unwrap();
         assert!(matches!(
             set.redact_payload(br#"{"accessToken":"unknown"}"#),
             Err(RedactionError::ForbiddenField(_))

@@ -601,10 +601,15 @@ impl LocalHistoryStore {
     /// reclaim draws from".
     pub fn payload_breakdown(&self) -> Result<Vec<(String, u64, u64)>, StoreError> {
         let _lease = self.gate.shared()?;
-        let connection = self.lock_connection()?;
+        let connection = self.query_connection()?;
+        // Measure from the record headers before grouping, so the sorter holds
+        // byte counts instead of complete event payloads.
         let mut statement = connection.prepare(
-            "SELECT kind, count(*), coalesce(sum(length(cast(payload as blob))), 0)
-             FROM semantic_events GROUP BY kind ORDER BY 3 DESC, 1",
+            "WITH sizes AS MATERIALIZED (
+                SELECT kind, octet_length(payload) AS bytes FROM semantic_events
+             )
+             SELECT kind, count(*), coalesce(sum(bytes), 0)
+             FROM sizes GROUP BY kind ORDER BY 3 DESC, 1",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((
@@ -625,9 +630,9 @@ impl LocalHistoryStore {
     pub fn stream_payload_bytes(&self, chat_id: &str) -> Result<u64, StoreError> {
         validate_id(chat_id)?;
         let _lease = self.gate.shared()?;
-        let connection = self.lock_connection()?;
+        let connection = self.query_connection()?;
         let bytes: i64 = connection.query_row(
-            "SELECT coalesce(sum(length(cast(payload as blob))), 0) FROM semantic_events
+            "SELECT coalesce(sum(octet_length(payload)), 0) FROM semantic_events
              WHERE chat_id = ?1",
             params![chat_id],
             |row| row.get(0),
@@ -684,10 +689,10 @@ impl LocalHistoryStore {
     /// Rows and payload bytes the delivery queue still holds, delivered or not.
     pub fn outbox_bytes(&self) -> Result<(u64, u64, u64), StoreError> {
         let _lease = self.gate.shared()?;
-        let connection = self.lock_connection()?;
+        let connection = self.query_connection()?;
         let (rows, delivered, bytes): (i64, i64, i64) = connection.query_row(
             "SELECT COUNT(*), COALESCE(SUM(delivered), 0),
-                    COALESCE(SUM(LENGTH(CAST(payload AS blob))), 0)
+                    COALESCE(SUM(octet_length(payload)), 0)
              FROM delivery_outbox",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1294,7 +1299,6 @@ fn validate_batch(batch: &CommitBatchV1) -> Result<(), StoreError> {
             return Err(StoreError::UnsupportedSchemaVersion(event.schema_version));
         }
         validate_text(&event.kind)?;
-        validate_payload(&event.payload)?;
         if !event_ids.insert(event.event_id.as_str()) {
             return Err(StoreError::DuplicateEventInBatch);
         }
@@ -1317,7 +1321,6 @@ fn validate_batch(batch: &CommitBatchV1) -> Result<(), StoreError> {
             return Err(StoreError::UnsupportedSchemaVersion(entry.schema_version));
         }
         validate_text(&entry.destination)?;
-        validate_payload(&entry.payload)?;
         if !outbox_ids.insert(entry.outbox_id.as_str()) {
             return Err(StoreError::DuplicateOutboxInBatch);
         }
@@ -1329,45 +1332,6 @@ fn validate_batch(batch: &CommitBatchV1) -> Result<(), StoreError> {
         if !token_ids.insert(reference.token_id.as_str()) {
             return Err(StoreError::DuplicateArtifactTokenInBatch);
         }
-    }
-    Ok(())
-}
-
-fn validate_payload(payload: &Value) -> Result<(), StoreError> {
-    match payload {
-        Value::Object(fields) => {
-            for (key, value) in fields {
-                let normalized: String = key
-                    .chars()
-                    .filter(|character| character.is_ascii_alphanumeric())
-                    .flat_map(char::to_lowercase)
-                    .collect();
-                if matches!(
-                    normalized.as_str(),
-                    "secret"
-                        | "secrets"
-                        | "token"
-                        | "accesstoken"
-                        | "refreshtoken"
-                        | "leasetoken"
-                        | "credential"
-                        | "credentials"
-                        | "password"
-                        | "authorization"
-                        | "apikey"
-                        | "privatekey"
-                ) {
-                    return Err(StoreError::ForbiddenSecretMaterial);
-                }
-                validate_payload(value)?;
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                validate_payload(value)?;
-            }
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -1813,8 +1777,6 @@ pub enum StoreError {
     InvalidId,
     #[error("text field must contain 1-256 non-NUL bytes")]
     InvalidText,
-    #[error("semantic history must not contain credential or secret material")]
-    ForbiddenSecretMaterial,
     #[error("commit exceeds the one MiB bound")]
     CommitTooLarge,
     #[error("event ID is duplicated inside the commit batch")]
@@ -2134,17 +2096,15 @@ mod tests {
     }
 
     #[test]
-    fn secret_keys_are_blocked_without_rejecting_benign_token_counts() {
+    fn history_keeps_application_fields_verbatim() {
         let (store, root) = store();
         let mut accepted = batch(0);
-        accepted.events[0].payload = serde_json::json!({"schemaVersion": 1, "tokenCount": 7});
-        store.commit(&accepted).expect("benign token count");
-        let mut rejected = batch(1);
-        rejected.events[0].payload = serde_json::json!({"schemaVersion": 1, "accessToken": "bad"});
-        assert!(matches!(
-            store.commit(&rejected),
-            Err(StoreError::ForbiddenSecretMaterial)
-        ));
+        accepted.events[0].payload = serde_json::json!({
+            "schemaVersion": 1,
+            "inputSchema": {"properties": {"token": {"type": "string"}}},
+            "arguments": {"accessToken": "fixture-token"},
+        });
+        store.commit(&accepted).expect("application payload");
         drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }

@@ -9,6 +9,7 @@ import {
 import { createDurableCommandId } from "../commandId";
 import {
   extensionConfigurationSchema,
+  parseSettingsV2Snapshot,
   settingsConfigurationV2Schema,
   settingsV2SnapshotSchema,
   type BuiltInToolConfiguration,
@@ -530,7 +531,7 @@ export interface SettingsV2CorePort {
 
 export class TauriSettingsV2CorePort implements SettingsV2CorePort {
   public async snapshot(): Promise<SettingsV2Snapshot> {
-    return settingsV2SnapshotSchema.parse(await invoke("settings_v2_snapshot"));
+    return parseSettingsV2Snapshot(await invoke("settings_v2_snapshot"));
   }
 
   public async commit(command: SettingsV2Commit): Promise<SettingsV2Receipt> {
@@ -646,13 +647,13 @@ export class TauriSettingsV2CorePort implements SettingsV2CorePort {
   }
 
   public async installToolPlugin(path: string): Promise<SettingsV2Snapshot> {
-    return settingsV2SnapshotSchema.parse(
+    return parseSettingsV2Snapshot(
       await invoke("settings_v2_install_tool_plugin", { path }),
     );
   }
 
   public async removeToolPlugin(pluginId: string): Promise<SettingsV2Snapshot> {
-    return settingsV2SnapshotSchema.parse(
+    return parseSettingsV2Snapshot(
       await invoke("settings_v2_remove_tool_plugin", { pluginId }),
     );
   }

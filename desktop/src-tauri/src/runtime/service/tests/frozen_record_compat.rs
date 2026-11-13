@@ -38,6 +38,19 @@ fn a_profile_with_one_unreadable_frozen_record_still_opens_lists_and_starts() {
     let listed = desktop.snapshot(0).unwrap();
     assert!(!listed.history.is_empty(), "Chats are still listed");
 
+    // A newer build can also stage a command whose payload this build cannot
+    // read. Its frozen context still identifies it as belonging to another Chat.
+    desktop
+        .history
+        .stage_stored_session_event_for_test(
+            "chat.effect-command-staged",
+            json!({
+                "schemaVersion": 1,
+                "record": {"frozenContextHash": format!("sha256:{}", "c".repeat(64))},
+            }),
+        )
+        .unwrap();
+
     // A new Chat starts and one stub-provider turn completes.
     desktop
         .command(UiCommandInput {

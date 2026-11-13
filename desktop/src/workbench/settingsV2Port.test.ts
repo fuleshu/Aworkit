@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nativeToolDefaults } from "./toolRegistry";
+import { settingsProblems } from "./configuration";
 import { TauriSettingsV2CorePort } from "./settingsV2Port";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), unlisten: vi.fn() }));
@@ -70,7 +71,7 @@ describe("native Settings v2 read", () => {
     ).toEqual({ authorityMode: "run_subagent", requiresApproval: true });
   });
 
-  it("still rejects a projection the trusted core would refuse to persist", async () => {
+  it("isolates a tool entry the trusted core would refuse to persist", async () => {
     const projection = preUpgradeProjection() as {
       settings: { tools: { id: string; configuration: Record<string, unknown> }[] };
     };
@@ -78,7 +79,24 @@ describe("native Settings v2 read", () => {
       (tool) => tool.id === "tool.subagent",
     )!.configuration.inheritParentTools = false;
     native.invoke.mockResolvedValue(projection);
-    await expect(new TauriSettingsV2CorePort().snapshot()).rejects.toThrow();
+
+    // One unusable entry must not hide the rest of the document: the snapshot
+    // loads, the offending tool is isolated, and its exact path is reported so
+    // the panel can explain it. Saving stays blocked by the caller while
+    // problems exist, so the dropped entry cannot be silently persisted away.
+    const snapshot = await new TauriSettingsV2CorePort().snapshot();
+    const problems = settingsProblems(snapshot);
+
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.map((problem) => problem.path)).toContainEqual(
+      expect.stringContaining("settings.tools["),
+    );
+    expect(
+      snapshot.settings.tools.some((tool) => tool.id === "tool.subagent"),
+    ).toBe(false);
+    expect(
+      snapshot.settings.tools.some((tool) => tool.id === "tool.files.read"),
+    ).toBe(true);
   });
 });
 

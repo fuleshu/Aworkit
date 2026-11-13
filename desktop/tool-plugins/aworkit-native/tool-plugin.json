@@ -2007,7 +2007,7 @@
       "id": "tool.job.output",
       "name": "Read job output",
       "description": "Read new output and status from a Chat-owned job, optionally waiting up to 60 seconds.",
-      "instructions": "Use returned cursor to replay or resume output. Without cursor the durable last-read position is used. A wait expiration leaves the process running. Read again when moreOutput is true.",
+      "instructions": "For normal polling, pass the exact jobId and optionally waitMs. Omit cursor to continue from the last acknowledged read. To reread output, use a cursor previously returned for this job. A soft wait leaves the job running. Read again when moreOutput is true.",
       "executor": "job.output",
       "requiresProject": false,
       "execution": "native",

@@ -87,7 +87,9 @@ fn desktop_probe_redeems_named_field_and_discovers_real_stdio_catalog() {
                         credential_ref,
                         field: "token".into(),
                     }],
-                },
+                
+                                                             environment: Default::default(),
+                                                         },
             },
             draft_fingerprint: "draft.mcp.real-stdio".into(),
         })

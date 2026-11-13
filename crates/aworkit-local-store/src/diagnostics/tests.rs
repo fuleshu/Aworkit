@@ -94,7 +94,7 @@ fn queues_only_redacted_allowlisted_records() {
         .insert("authorization".to_owned(), "Bearer top-secret".to_owned());
     assert_eq!(
         store.try_append(&forbidden, &redaction),
-        DiagnosticWriteOutcome::Dropped(DiagnosticDropReason::RedactionRejected)
+        DiagnosticWriteOutcome::Dropped(DiagnosticDropReason::InvalidRecord)
     );
     let mut prompt = input("prompt payload");
     prompt
@@ -130,7 +130,7 @@ fn queues_only_redacted_allowlisted_records() {
 }
 
 #[test]
-fn free_form_prompt_and_embedded_credential_text_never_enter_the_queue() {
+fn free_form_payloads_never_enter_the_diagnostic_queue() {
     let root = root("prompt-safe");
     let mut store = DiagnosticLogStore::open_at(&root, config("writer.1"), 1_000).expect("store");
     let mut prompt = input("safe.operation");
@@ -149,7 +149,7 @@ fn free_form_prompt_and_embedded_credential_text_never_enter_the_queue() {
     );
     assert_eq!(
         store.try_append(&credential, &RedactionSet::default()),
-        DiagnosticWriteOutcome::Dropped(DiagnosticDropReason::RedactionRejected)
+        DiagnosticWriteOutcome::Dropped(DiagnosticDropReason::InvalidRecord)
     );
     store.flush_at(1_001).expect("flush");
     let records = store.read_page(None, 16).expect("page").records;

@@ -77,7 +77,7 @@ use super::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
         ToolApprovalChallengeV1, WorkflowToolActivityV1, WorkflowToolBindingV1,
         file_tool_capability_binding_with_nodes, file_tool_descriptors, freeze_file_tool_bindings,
-        comfyui_tool_descriptor, implied_job_control_ids,
+        comfyui_tool_descriptor, extend_implied_job_controls,
         mcp_tool_descriptor,
     },
 };
@@ -3268,24 +3268,7 @@ fn compile_graph_snapshot(
                         })?;
                     node_tools.push(binding);
                 }
-                // Job control rides with the capability that launches work, so a
-                // node that may start a host shell or Python process can always
-                // read, feed or stop it.
-                let bound = node_tools
-                    .iter()
-                    .map(|tool| tool.capability_id.clone())
-                    .collect::<Vec<_>>();
-                for implied in implied_job_control_ids(&bound) {
-                    if node_tools.iter().any(|tool| tool.capability_id == implied) {
-                        continue;
-                    }
-                    if let Some(binding) = tool_bindings
-                        .iter()
-                        .find(|binding| binding.capability_id == implied)
-                    {
-                        node_tools.push(binding.clone());
-                    }
-                }
+                extend_implied_job_controls(&mut node_tools, tool_bindings);
                 (
                     WorkerExecutorKindV1::Agent,
                     Some(model_capability.clone()),

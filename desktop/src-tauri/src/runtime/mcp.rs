@@ -30,7 +30,7 @@ use super::{
     dto::{McpProbeFeaturesV2, McpProbeRequestV2, McpProbeResultV2},
     settings_v2::{
         CredentialMetadataConfigurationV2, IntegrationTransportV2, NamedCredentialBindingV2,
-        validate_http_url, validate_secret_free_stdio_argument,
+        validate_bounded_text, validate_http_url,
     },
 };
 
@@ -51,15 +51,23 @@ const ADAPTER_VERSION: &str = "rmcp-3.1.4";
 const RUN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Production limits shared by the one-shot probe and frozen Run sessions.
+///
+/// These bound what a server may advertise, not what Aworkit will ask for. They
+/// are aligned with the capability-host defaults (`ProductionMcpPeerLimitsV1`)
+/// because the catalogue bound also sizes the stdio wire budget
+/// (`maximum_wire_bytes = max(catalogue, result, schema) + 1 MiB`). A smaller
+/// catalogue bound silently kills discovery of a legitimate server: REA
+/// advertises 229 tools in a 3.5 MB `tools/list` frame, which exceeded the
+/// previous 2 MiB bound and surfaced as `discovery_failed`/`transport_lost`.
 pub(crate) fn production_peer_limits() -> ProductionMcpPeerLimitsV1 {
     ProductionMcpPeerLimitsV1 {
         initialization_timeout: Duration::from_secs(30),
         request_timeout: RUN_REQUEST_TIMEOUT,
         close_timeout: Duration::from_secs(5),
-        maximum_catalog_entries: MAX_PROBE_CATALOG_ENTRIES,
-        maximum_catalog_bytes: 2 * 1024 * 1024,
-        maximum_schema_bytes: 512 * 1024,
-        maximum_result_bytes: 1024 * 1024,
+        maximum_catalog_entries: 16_384,
+        maximum_catalog_bytes: 8 * 1024 * 1024,
+        maximum_schema_bytes: 1024 * 1024,
+        maximum_result_bytes: 8 * 1024 * 1024,
     }
 }
 
@@ -225,9 +233,11 @@ pub(crate) fn probe_mcp_server(
         request_timeout: Duration::from_secs(30),
         close_timeout: Duration::from_secs(5),
         maximum_catalog_entries: MAX_PROBE_CATALOG_ENTRIES,
-        maximum_catalog_bytes: 2 * 1024 * 1024,
-        maximum_schema_bytes: 512 * 1024,
-        maximum_result_bytes: 1024 * 1024,
+        // A discovery bound must admit a real server's catalogue: REA's is
+        // 3.5 MB, and the bound also sizes the stdio wire budget.
+        maximum_catalog_bytes: 8 * 1024 * 1024,
+        maximum_schema_bytes: 1024 * 1024,
+        maximum_result_bytes: 8 * 1024 * 1024,
     };
     let peer = Arc::new(
         ProductionMcpPeer::with_limits(vec![config], limits)
@@ -330,6 +340,7 @@ pub(crate) fn prepare_transport(
             args,
             cwd,
             env,
+            environment,
         } => {
             validate_text("MCP STDIO command", command, true)?;
             let executable = PathBuf::from(unquote_runtime_path(command));
@@ -345,7 +356,7 @@ pub(crate) fn prepare_transport(
                 ));
             }
             for argument in args {
-                validate_secret_free_stdio_argument("MCP STDIO argument", argument)?;
+                validate_bounded_text("MCP STDIO argument", argument)?;
             }
             if let Some(directory) = cwd {
                 validate_text("MCP working directory", directory, true)?;
@@ -353,12 +364,13 @@ pub(crate) fn prepare_transport(
                     return Err("MCP working directory must be absolute".into());
                 }
             }
+            super::settings_v2::validate_public_environment("MCP STDIO", environment, env)?;
             (
                 McpTransportEndpointV1::Stdio(McpStdioTransportConfigV1 {
                     executable,
                     arguments: args.clone(),
                     working_directory: cwd.as_ref().map(PathBuf::from),
-                    public_environment: BTreeMap::new(),
+                    public_environment: environment.clone(),
                 }),
                 env,
                 "environment",
@@ -694,6 +706,29 @@ mod tests {
         assert!(
             limits.initialization_timeout < limits.request_timeout,
             "discovery stays short while a tool call may run long"
+        );
+    }
+
+    /// The catalogue bound also sizes the stdio wire budget
+    /// (`maximum_wire_bytes = max(catalogue, result, schema) + 1 MiB`). A bound
+    /// smaller than a real server's catalogue silently kills discovery: REA
+    /// advertises 229 tools in a 3.5 MB frame, which previously failed as
+    /// `discovery_failed`/`transport_lost` against a 2 MiB bound.
+    #[test]
+    fn discovery_admits_a_large_real_catalogue() {
+        let limits = production_peer_limits();
+        let wire_bytes = limits
+            .maximum_result_bytes
+            .max(limits.maximum_catalog_bytes)
+            .max(limits.maximum_schema_bytes)
+            + 1024 * 1024;
+        assert!(
+            wire_bytes >= 4 * 1024 * 1024,
+            "one stdio frame must admit a multi-megabyte catalogue: {wire_bytes}"
+        );
+        assert!(
+            limits.maximum_catalog_bytes >= 4 * 1024 * 1024,
+            "catalogue bound must admit a server advertising hundreds of tools"
         );
     }
 }

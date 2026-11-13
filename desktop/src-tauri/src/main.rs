@@ -906,12 +906,13 @@ async fn workflow_set_default(
 async fn desktop_history_store_status(
     runtime: tauri::State<'_, SharedRuntime>,
 ) -> Result<aworkit_desktop::runtime::HistoryStoreStatusV1, String> {
-    runtime_worker(
-        Arc::clone(runtime.inner()),
-        "history store status",
-        |runtime| runtime.history_store_status(),
-    )
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let reader = runtime.lock()?.history_store_reader();
+        reader.measure()
+    })
     .await
+    .map_err(|error| format!("history store status worker failed: {error}"))?
 }
 
 /// The explicit reclaim: release superseded snapshots, remove already-deleted

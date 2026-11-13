@@ -154,7 +154,7 @@ impl SessionManifest {
             }
         }
         if !valid_hash(&self.frozen_snapshot_hash)
-            || self.export_policy_hash != ExportPolicy.policy_hash()
+            || !ExportPolicy.supports_policy_hash(&self.export_policy_hash)
         {
             return Err(ManifestError::Malformed);
         }

@@ -317,7 +317,7 @@ fn expired_bytes_still_count_against_physical_quota() {
 fn forbidden_secret_field_seals_an_empty_truncated_capture() {
     let root = root("forbidden-field");
     let store = DebugCaptureStore::for_store_root(&root).expect("store");
-    let redaction = redaction();
+    let redaction = RedactionSet::new(3, vec![], vec!["authorization".into()]).unwrap();
     store
         .begin(&request("capture.2"), &policy(), &redaction)
         .expect("begin");

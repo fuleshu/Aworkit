@@ -948,7 +948,7 @@ impl ProjectDocumentPort for MemoryDocuments {
 }
 
 #[test]
-fn project_documents_round_trip_and_reject_secret_material() {
+fn project_documents_round_trip_application_fields() {
     let root = temp_root("documents");
     let coordinator = ProjectCoordinator::with_document_port(
         root.path().join("state"),
@@ -958,7 +958,7 @@ fn project_documents_round_trip_and_reject_secret_material() {
     let document_id = id("workflow.one");
     let document = ProjectDocumentV1 {
         schema_version: 1,
-        body: json!({"nodes": [], "credentialRef": "credential.one"}),
+        body: json!({"nodes": [], "credentialRef": "credential.one", "apiKey": "fixture-value"}),
     };
     let stored = coordinator
         .save_document_v1(
@@ -984,19 +984,6 @@ fn project_documents_round_trip_and_reject_secret_material() {
     assert_eq!(
         serde_json::from_slice::<ProjectDocumentV1>(&exported).expect("decode"),
         document
-    );
-    assert!(
-        coordinator
-            .save_document_v1(
-                ProjectDocumentKindV1::ProjectConfig,
-                &id("config.secret"),
-                None,
-                &ProjectDocumentV1 {
-                    schema_version: 1,
-                    body: json!({"apiKey": "cleartext"}),
-                },
-            )
-            .is_err()
     );
 }
 

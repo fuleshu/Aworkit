@@ -154,10 +154,11 @@ pub struct AgentLoopV1 {
 
 impl AgentLoopV1 {
     pub fn new(config: AgentLoopConfigV1) -> Result<Self, AgentErrorV1> {
+        // The allowlist mirrors the frozen capabilities, including expanded MCP
+        // catalogs. Its size does not determine whether a Chat may run.
         if config.scope_id.is_empty()
             || resource_usage(config.turn_reservation).is_zero()
             || config.context_pointers.len() > 256
-            || config.allowed_tool_capability_refs.len() > 256
         {
             return Err(AgentErrorV1::InvalidState);
         }

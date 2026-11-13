@@ -20,7 +20,7 @@ impl LocalHistoryStore {
             .transpose()
     }
 
-    fn query_connection(&self) -> Result<Connection, StoreError> {
+    pub(super) fn query_connection(&self) -> Result<Connection, StoreError> {
         let connection = Connection::open_with_flags(
             self.path.as_ref(),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,

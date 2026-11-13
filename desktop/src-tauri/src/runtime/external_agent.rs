@@ -26,7 +26,7 @@ use super::{
     settings_v2::{
         CredentialMetadataConfigurationV2, ExternalAgentCapabilitiesV2,
         ExternalAgentConfigurationV2, IntegrationTransportV2, NamedCredentialBindingV2,
-        SettingsConfigurationV2, validate_secret_free_stdio_argument,
+        SettingsConfigurationV2, validate_bounded_text,
     },
     tool_loop::ResolvedExternalAgentTargetV1,
 };
@@ -198,6 +198,7 @@ pub(crate) fn resolve_delegation_target(
         args,
         cwd,
         env,
+        ..
     } = &target.connection
     else {
         return Err(format!(
@@ -273,6 +274,7 @@ pub(crate) fn probe_external_agent(
                 args,
                 cwd,
                 env,
+                ..
             } => (command, args, cwd, env),
             IntegrationTransportV2::Http { .. } => {
                 return Err(
@@ -281,7 +283,7 @@ pub(crate) fn probe_external_agent(
             }
         };
     for argument in arguments {
-        validate_secret_free_stdio_argument("external-agent STDIO argument", argument)?;
+        validate_bounded_text("external-agent STDIO argument", argument)?;
     }
     if arguments.first().map(String::as_str) != Some("app-server") {
         return Err(
@@ -364,13 +366,14 @@ fn probe_claude_code(
             args,
             cwd,
             env: _,
+            ..
         } => (command, args, cwd),
         IntegrationTransportV2::Http { .. } => {
             return Err("Claude Code requires its stable local STDIO transport".into());
         }
     };
     for argument in arguments {
-        validate_secret_free_stdio_argument("external-agent STDIO argument", argument)?;
+        validate_bounded_text("external-agent STDIO argument", argument)?;
     }
     let executable = resolve_executable(command)?;
     if let Some(directory) = working_directory.as_deref() {
@@ -548,7 +551,9 @@ mod tests {
                 },
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -714,7 +719,9 @@ mod tests {
             args: Vec::new(),
             cwd: None,
             env: Vec::new(),
-        };
+        
+                                                               environment: Default::default(),
+                                                           };
         let error = probe_claude_code(&request(missing)).expect_err("a missing CLI is not ready");
         assert!(error.contains("was not found"), "{error}");
 

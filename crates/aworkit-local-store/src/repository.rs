@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::{
     document::{DocumentKind, DocumentValidationError, JsonDocument, SchemaVersion},
-    document_policy::{DocumentPolicyError, validate_editable_document, validate_inert_document},
+    document_policy::{DocumentPolicyError, validate_editable_document},
     filesystem::write_and_sync_atomic,
     maintenance::MaintenanceGate,
     manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ManifestEntry},
@@ -238,9 +238,7 @@ impl RepositoryRoot {
         if document.raw_json().len() > maximum_document_bytes(kind) {
             return Err(RepositoryError::DocumentTooLarge);
         }
-        if inert {
-            validate_inert_document(document)?;
-        } else {
+        if !inert {
             validate_editable_document(kind, document)?;
         }
 
@@ -670,20 +668,14 @@ mod tests {
     }
 
     #[test]
-    fn documents_reject_secret_values_but_allow_opaque_credential_references() {
+    fn documents_accept_application_fields_without_interpreting_their_names() {
         let repository = repository();
-        let accepted =
-            document(r#"{"schemaVersion":1,"credentialRef":"credential_01","tokenCount":42}"#);
+        let accepted = document(
+            r#"{"schemaVersion":1,"credentialRef":{"type":"string"},"accessToken":"fixture-token","tokenCount":42}"#,
+        );
         repository
-            .save(DocumentKind::Configuration, "safe", None, &accepted)
-            .expect("credential reference");
-        let rejected = document(r#"{"schemaVersion":1,"accessToken":"plaintext"}"#);
-        assert!(matches!(
-            repository.save(DocumentKind::Configuration, "unsafe", None, &rejected),
-            Err(RepositoryError::DocumentPolicy(
-                DocumentPolicyError::SecretMaterial(_)
-            ))
-        ));
+            .save(DocumentKind::Configuration, "accepted", None, &accepted)
+            .expect("configuration document");
         fs::remove_dir_all(repository.path()).expect("cleanup");
     }
 

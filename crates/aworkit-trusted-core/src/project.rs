@@ -367,7 +367,7 @@ fn validate_document(document: &ProjectDocumentV1) -> Result<(), ProjectError> {
         .len()
         > MAX_DOCUMENT_BYTES
         || !document.body.is_object()
-        || contains_secret_material(&document.body, 0)?
+        || document_depth_exceeds_limit(&document.body, 0)
     {
         return Err(ProjectError::InvalidDocument);
     }
@@ -399,34 +399,18 @@ fn validate_stored_document(
     Ok(())
 }
 
-fn contains_secret_material(value: &Value, depth: usize) -> Result<bool, ProjectError> {
+fn document_depth_exceeds_limit(value: &Value, depth: usize) -> bool {
     if depth > 64 {
-        return Err(ProjectError::InvalidDocument);
+        return true;
     }
     match value {
-        Value::Object(object) => {
-            for (key, value) in object {
-                let normalized = key.to_ascii_lowercase().replace('-', "_");
-                let compact = normalized.replace('_', "");
-                let forbidden = ["password", "secret", "apikey", "accesstoken", "privatekey"];
-                if forbidden.iter().any(|needle| compact.contains(needle)) {
-                    return Ok(true);
-                }
-                if contains_secret_material(value, depth + 1)? {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        Value::Array(values) => {
-            for value in values {
-                if contains_secret_material(value, depth + 1)? {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        _ => Ok(false),
+        Value::Object(object) => object
+            .values()
+            .any(|value| document_depth_exceeds_limit(value, depth + 1)),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| document_depth_exceeds_limit(value, depth + 1)),
+        _ => false,
     }
 }
 
@@ -448,7 +432,7 @@ pub enum ProjectError {
     DocumentMissing,
     #[error("document schema version {0} is unsupported")]
     UnsupportedDocumentSchema(u16),
-    #[error("project document is malformed, oversized, or contains direct secret material")]
+    #[error("project document is malformed or exceeds its size or nesting limit")]
     InvalidDocument,
     #[error("document port returned inconsistent identity or content")]
     InvalidPortResponse,
@@ -514,18 +498,11 @@ mod tests {
     }
 
     #[test]
-    fn direct_secret_shapes_are_rejected_but_credential_refs_are_allowed() {
+    fn project_documents_do_not_interpret_application_field_names() {
         assert!(
             validate_document(&ProjectDocumentV1 {
                 schema_version: 1,
-                body: serde_json::json!({"password": "cleartext"}),
-            })
-            .is_err()
-        );
-        assert!(
-            validate_document(&ProjectDocumentV1 {
-                schema_version: 1,
-                body: serde_json::json!({"credentialRef": "credential.one"}),
+                body: serde_json::json!({"password": "fixture-value", "credentialRef": "credential.one"}),
             })
             .is_ok()
         );

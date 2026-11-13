@@ -100,6 +100,56 @@ fn native_request(metadata: CredentialMetadataV1) -> WorkflowExecutionRequestV1 
     request
 }
 
+/// A large MCP catalog must reach the model on both sides of the Chat freeze.
+#[test]
+fn large_catalog_reaches_the_model_in_new_and_continued_chats() {
+    let root = TempDir::new().unwrap();
+    let control = Arc::new(ContinuationControl::default());
+    let (pipeline, credentials, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+    drop(pipeline);
+    let pipeline = WorkflowExecutionPipeline::compose(
+        root.path(),
+        credentials,
+        Arc::new(ContinuationProviderFactory(control.clone())),
+    )
+    .unwrap();
+    let first = native_request(metadata);
+    pipeline.execute(first.clone()).unwrap();
+    control.offered_descriptions.lock().unwrap().clear();
+
+    let mut large = first;
+    large.request_id = stable("command.large-catalog-followup").unwrap();
+    large.mcp_servers = vec![mcp_fixture_manifest(pipeline.generation)];
+    for index in 0..266 {
+        let tool = format!("lookup_{index}");
+        let capability_id = format!("mcp://{MCP_FIXTURE_SERVER}/{tool}");
+        large.tools.push(WorkflowToolBindingV1 {
+            capability_id: capability_id.clone(),
+            configuration: json!({"serverId": MCP_FIXTURE_SERVER, "tool": tool}),
+            options: Default::default(),
+            credential_bindings: Vec::new(),
+            definition: Some(ModelToolDefinitionV1 {
+                capability_id,
+                name: tool,
+                description: format!("Look up entry {index}."),
+                input_schema: mcp_echo_schema(),
+            }),
+        });
+    }
+    large.workflow_snapshot["nodes"][1]["configuration"]["toolIds"] =
+        json!(large.tools.iter().map(|tool| &tool.capability_id).collect::<Vec<_>>());
+
+    pipeline.execute(large.clone()).unwrap();
+    assert_eq!(control.offered_descriptions.lock().unwrap().len(), 273);
+    control.offered_descriptions.lock().unwrap().clear();
+
+    large.request_id = stable("command.large-catalog-first").unwrap();
+    large.chat_id = stable("chat.large-catalog").unwrap();
+    large.run_id = stable("run.large-catalog").unwrap();
+    pipeline.execute(large).unwrap();
+    assert_eq!(control.offered_descriptions.lock().unwrap().len(), 273);
+}
+
 /// The interface the model is offered re-resolves from this build, so a Chat
 /// frozen before a tool improved adopts the improvement in its next pass while
 /// the authority it was frozen with does not change.

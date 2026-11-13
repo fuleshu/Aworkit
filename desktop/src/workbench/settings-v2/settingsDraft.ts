@@ -391,7 +391,6 @@ export function settingsDraftIssues(
         ...validateSettingsConfiguration(parsed.data).map((issue) =>
           decorateValidationIssue(parsed.data, issue),
         ),
-        ...freeformSecretIssues(parsed.data),
       ]
     : parsed.error.issues.map((issue) => ({
         section: sectionForSchemaPath(draft, issue.path.map(String)),
@@ -435,105 +434,6 @@ function decorateValidationIssue(
     ...issue,
     focusId: focusIdForSchemaPath(draft, issue.path.split(".")),
   };
-}
-
-function freeformSecretIssues(
-  draft: SettingsConfigurationV2,
-): SettingsUiIssue[] {
-  const candidates: {
-    readonly section: SettingsSectionId;
-    readonly path: string;
-    readonly focusId: string;
-    readonly value: Readonly<Record<string, unknown>>;
-  }[] = [];
-  for (const provider of draft.providers) {
-    candidates.push({
-      section: "providers",
-      path: `providers.${provider.id}.configuration`,
-      focusId: `${provider.id}-unsupported-configuration`,
-      value: provider.configuration,
-    });
-    for (const model of provider.models) {
-      candidates.push({
-        section: "providers",
-        path: `providers.${provider.id}.models.${model.id}.parameters`,
-        focusId: `${provider.id}-${model.id}-parameters`,
-        value: model.parameters,
-      });
-    }
-  }
-  for (const tool of draft.tools)
-    candidates.push({
-      section: "tools",
-      path: `tools.${tool.id}.configuration`,
-      focusId: `${tool.id}-configuration`,
-      value: tool.configuration,
-    });
-  for (const extension of draft.extensions)
-    candidates.push({
-      section: "extensions",
-      path: `extensions.${extension.id}.configuration`,
-      focusId: `${extension.id}-configuration`,
-      value: extension.configuration,
-    });
-  for (const agent of draft.externalAgents)
-    candidates.push({
-      section: "external_agents",
-      path: `externalAgents.${agent.id}.configuration`,
-      focusId: `${agent.id}-configuration`,
-      value: agent.configuration,
-    });
-  return candidates.flatMap((candidate) => {
-    const secretKey = findSecretLikeKey(candidate.value);
-    return secretKey === null
-      ? []
-      : [
-          {
-            section: candidate.section,
-            path: candidate.path,
-            focusId: candidate.focusId,
-            message: `Secret-like JSON field ${secretKey} is forbidden; store its value as a credential binding.`,
-          },
-        ];
-  });
-}
-
-function findSecretLikeKey(value: unknown): string | null {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const result = findSecretLikeKey(item);
-      if (result !== null) return result;
-    }
-    return null;
-  }
-  if (value === null || typeof value !== "object") return null;
-  for (const [key, nested] of Object.entries(value)) {
-    const normalized = key.replaceAll(/[^a-zA-Z0-9]/gu, "").toLowerCase();
-    if (
-      [
-        "apikey",
-        "accesstoken",
-        "authtoken",
-        "authorization",
-        "authheader",
-        "bearertoken",
-        "clientsecret",
-        "password",
-        "passwd",
-        "privatekey",
-        "secret",
-      ].some((marker) => normalized.includes(marker)) ||
-      normalized === "token" ||
-      normalized.endsWith("tokenvalue") ||
-      normalized === "credential" ||
-      normalized.endsWith("credentials") ||
-      normalized.includes("credentialref")
-    )
-      return key;
-    const result = findSecretLikeKey(nested);
-    if (result !== null) return result;
-  }
-  return null;
 }
 
 /** Stable fingerprint attached to native unsaved-provider operations. */

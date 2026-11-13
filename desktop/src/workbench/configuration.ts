@@ -424,6 +424,9 @@ export const connectionConfigurationSchema = z.discriminatedUnion("transport", [
       args: z.array(z.string().max(16_384)),
       cwd: z.string().max(4096).nullable().optional(),
       env: z.array(namedTransportValueSchema),
+      // Non-secret environment values a stock MCP server needs (`JAVA_HOME`, a
+      // tool path, a schema-profile flag). Secrets stay in `env` bindings.
+      environment: z.record(z.string().max(128), z.string().max(4096)).optional(),
     })
     .strict(),
 ]);
@@ -709,6 +712,170 @@ export const settingsV2SnapshotSchema = z
     providerHealth: z.array(providerHealthSnapshotV2Schema),
   })
   .strict();
+
+/** One recovered-configuration problem, addressed by JSON path. */
+export interface SettingsProblem {
+  /** Location in the snapshot document, e.g. `toolPlugins[2].server.transport`. */
+  readonly path: string;
+  /** The validator's own message, kept verbatim so it can be acted on. */
+  readonly message: string;
+}
+
+/**
+ * A snapshot that always loads, plus whatever the validator had to reject.
+ *
+ * Settings are a document of many independent entries (providers, MCP servers,
+ * plugins, agents, projects…). One malformed entry must not make the whole
+ * panel unusable, so entries are validated one at a time: good ones are kept,
+ * bad ones are dropped from the editable draft and reported here with their
+ * exact path. The caller must treat a non-empty `problems` list as a reason to
+ * keep the document read-only, because saving the filtered draft would delete
+ * the entries that could not be represented.
+ */
+export type SettingsV2SnapshotLoad = SettingsV2Snapshot & {
+  readonly problems: readonly SettingsProblem[];
+};
+
+const SETTINGS_COLLECTIONS = {
+  providers: providerConfigurationSchema,
+  modelTiers: modelTierConfigurationSchema,
+  credentials: credentialMetadataConfigurationSchema,
+  tools: builtInToolConfigurationSchema,
+  extensions: extensionConfigurationSchema,
+  mcpServers: mcpServerConfigurationSchema,
+  externalAgents: externalAgentConfigurationSchema,
+  projects: projectConfigurationSchema,
+} as const;
+
+function describeIssues(issues: readonly { path: readonly PropertyKey[]; message: string }[]): string {
+  return issues
+    .map((issue) => (issue.path.length > 0 ? `${issue.path.map(String).join(".")}: ${issue.message}` : issue.message))
+    .join("; ");
+}
+
+/**
+ * Validates a settings snapshot without letting one bad entry hide the rest.
+ *
+ * The envelope itself must be a settings snapshot; inside it, every collection
+ * entry is validated independently. A structurally broken document still throws
+ * with the offending paths, so the caller can show a specific error instead of a
+ * blank panel.
+ */
+export function parseSettingsV2Snapshot(raw: unknown): SettingsV2SnapshotLoad {
+  if (raw === null || typeof raw !== "object") {
+    throw new Error("settings snapshot is not an object");
+  }
+  const envelope = raw as Record<string, unknown>;
+  const problems: SettingsProblem[] = [];
+
+  const rawSettings = envelope.settings;
+  if (rawSettings === null || typeof rawSettings !== "object") {
+    throw new Error("settings snapshot has no settings object");
+  }
+  const settingsRecord = rawSettings as Record<string, unknown>;
+
+  const recoveredSettings: Record<string, unknown> = { ...settingsRecord };
+  for (const [key, itemSchema] of Object.entries(SETTINGS_COLLECTIONS)) {
+    const value = settingsRecord[key];
+    if (value === undefined) continue;
+    if (!Array.isArray(value)) {
+      problems.push({ path: `settings.${key}`, message: "must be an array" });
+      recoveredSettings[key] = [];
+      continue;
+    }
+    const kept: unknown[] = [];
+    value.forEach((item, index) => {
+      const parsed = itemSchema.safeParse(item);
+      if (parsed.success) {
+        kept.push(parsed.data);
+      } else {
+        problems.push({ path: `settings.${key}[${index}]`, message: describeIssues(parsed.error.issues) });
+      }
+    });
+    recoveredSettings[key] = kept;
+  }
+
+  const settings = settingsConfigurationV2Schema.safeParse(recoveredSettings);
+  if (!settings.success) {
+    const paths = settings.error.issues
+      .map((issue) => `settings.${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`settings document is invalid: ${paths}`);
+  }
+
+  const recoveredPlugins = (() => {
+    const value = envelope.toolPlugins;
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value)) {
+      problems.push({ path: "toolPlugins", message: "must be an array" });
+      return [];
+    }
+    const pluginSchema = z.object({ path: z.string(), server: mcpServerConfigurationSchema.nullable(), error: z.string().nullable() }).strict();
+    const kept: unknown[] = [];
+    value.forEach((item, index) => {
+      const parsed = pluginSchema.safeParse(item);
+      if (parsed.success) {
+        kept.push(parsed.data);
+      } else {
+        problems.push({ path: `toolPlugins[${index}]`, message: describeIssues(parsed.error.issues) });
+      }
+    });
+    return kept;
+  })();
+
+  const recoveredHealth = (() => {
+    const value = envelope.providerHealth;
+    if (!Array.isArray(value)) {
+      problems.push({ path: "providerHealth", message: "must be an array" });
+      return [];
+    }
+    const kept: unknown[] = [];
+    value.forEach((item, index) => {
+      const parsed = providerHealthSnapshotV2Schema.safeParse(item);
+      if (parsed.success) {
+        kept.push(parsed.data);
+      } else {
+        problems.push({ path: `providerHealth[${index}]`, message: describeIssues(parsed.error.issues) });
+      }
+    });
+    return kept;
+  })();
+
+  const version = envelope.version;
+  if (typeof version !== "number" || !Number.isInteger(version) || version <= 0) {
+    throw new Error("settings snapshot has no valid version");
+  }
+
+  const snapshot: SettingsV2SnapshotLoad = {
+    version,
+    schemaVersion: 2,
+    settings: settings.data,
+    providerHealth: recoveredHealth as SettingsV2Snapshot["providerHealth"],
+    ...(recoveredPlugins === undefined
+      ? {}
+      : { toolPlugins: recoveredPlugins as SettingsV2Snapshot["toolPlugins"] }),
+    ...(typeof envelope.toolPluginDirectory === "string"
+      ? { toolPluginDirectory: envelope.toolPluginDirectory }
+      : {}),
+    problems,
+  };
+  return snapshot;
+}
+
+export function settingsProblems(snapshot: SettingsV2Snapshot): readonly SettingsProblem[] {
+  const problems = (snapshot as { problems?: unknown }).problems;
+  return Array.isArray(problems) ? (problems as readonly SettingsProblem[]) : [];
+}
+
+/** One-line summary of recovered problems, bounded so a banner stays readable. */
+export function describeSettingsProblems(problems: readonly SettingsProblem[], limit = 4): string {
+  const shown = problems
+    .slice(0, limit)
+    .map((problem) => `${problem.path}: ${problem.message}`)
+    .join(" | ");
+  const more = problems.length > limit ? ` (+${problems.length - limit} more)` : "";
+  return `${problems.length} configuration problem${problems.length === 1 ? "" : "s"} found; settings are read-only until they are fixed. ${shown}${more}`;
+}
 
 export type ModelTarget = z.infer<typeof modelTargetSchema>;
 export type ModelConfiguration = z.infer<typeof modelConfigurationSchema>;
@@ -1393,27 +1560,6 @@ function validateConnection(
       });
     }
   }
-  for (const [index, argument] of connection.args.entries()) {
-    if (argumentContainsSecret(argument)) {
-      issues.push({
-        section,
-        path: `${path}.args.${index}`,
-        message:
-          "STDIO arguments cannot contain authentication or credential material; use a secret-backed environment binding.",
-      });
-    }
-    for (const candidate of [argument, argument.split("=", 2)[1]]) {
-      if (candidate === undefined || !/^https?:\/\//iu.test(candidate)) continue;
-      const issue = secretFreeHttpUrlIssue(candidate);
-      if (issue !== null) {
-        issues.push({
-          section,
-          path: `${path}.args.${index}`,
-          message: `STDIO URL argument ${issue}`,
-        });
-      }
-    }
-  }
   const environmentBindings = [
     ...connection.env.map((binding, index) => ({
       binding,
@@ -1649,28 +1795,6 @@ function secretFreeHttpUrlIssue(value: string): string | null {
   } catch {
     return "must be an absolute HTTP(S) URL without credentials, query, or fragment.";
   }
-}
-
-function argumentContainsSecret(value: string): boolean {
-  const normalized = value.replaceAll(/[^a-zA-Z0-9]/gu, "").toLowerCase();
-  return (
-    [
-      "apikey",
-      "accesstoken",
-      "authtoken",
-      "authorization",
-      "authheader",
-      "bearertoken",
-      "clientsecret",
-      "credential",
-      "password",
-      "passwd",
-      "privatekey",
-      "secret",
-      "token",
-    ].some((marker) => normalized.includes(marker)) ||
-    /^(?:sk-|ghp_|github_pat_|bearer\s)/iu.test(value)
-  );
 }
 
 function validateBindings(

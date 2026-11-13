@@ -42,22 +42,6 @@ pub(super) fn validate_text(value: &str) -> Result<(), RepairLedgerError> {
     if value.is_empty() || value.len() > MAX_SUMMARY_BYTES || value.contains('\0') {
         return Err(RepairLedgerError::InvalidRecord);
     }
-    let lower = value.to_ascii_lowercase();
-    if [
-        "authorization:",
-        "proxy-authorization:",
-        "password=",
-        "api_key=",
-        "access_token=",
-        "refresh_token=",
-        "secret_lease=",
-        "bearer ",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
-    {
-        return Err(RepairLedgerError::ForbiddenSecretMaterial);
-    }
     Ok(())
 }
 

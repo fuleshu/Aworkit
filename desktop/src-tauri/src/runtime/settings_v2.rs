@@ -1608,6 +1608,16 @@ pub enum IntegrationTransportV2 {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
         env: Vec<NamedCredentialBindingV2>,
+        /// Non-secret environment values for the server process.
+        ///
+        /// MCP servers routinely need plain configuration in their environment
+        /// (`JAVA_HOME`, a tool path, a schema-profile flag). The child is
+        /// spawned with `env_clear()` and only a fixed OS allowlist, so without
+        /// this a stock server cannot be configured at all. Values are visible
+        /// to the user and are never stored in the credential vault; secrets
+        /// still belong in `env` bindings.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        environment: BTreeMap<String, String>,
     },
 }
 
@@ -1627,6 +1637,7 @@ impl IntegrationTransportV2 {
                 args,
                 cwd,
                 env,
+                environment,
             } => {
                 validate_nonempty(&format!("{owner} command"), command)?;
                 if args.len() > MAX_ARGUMENTS {
@@ -1635,9 +1646,10 @@ impl IntegrationTransportV2 {
                     ));
                 }
                 for argument in args {
-                    validate_secret_free_stdio_argument(&format!("{owner} argument"), argument)?;
+                    validate_bounded_text(&format!("{owner} argument"), argument)?;
                 }
                 validate_optional_text(&format!("{owner} working directory"), cwd.as_deref())?;
+                validate_public_environment(owner, environment, env)?;
                 validate_bindings(owner, env, credentials)
             }
         }
@@ -1728,6 +1740,7 @@ fn validate_external_agent_transport_targets(
             args,
             cwd,
             env,
+            environment: _,
         } => {
             let binding_count = env
                 .len()
@@ -1819,6 +1832,49 @@ fn validate_http_credential_targets(
             return Err(format!(
                 "{owner} HTTP credential target '{}' is configured more than once (header names are case-insensitive)",
                 binding.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Bounds for non-secret environment values handed to a STDIO MCP server.
+const MAX_PUBLIC_ENVIRONMENT_ENTRIES: usize = 64;
+const MAX_PUBLIC_ENVIRONMENT_VALUE_BYTES: usize = 4096;
+
+/// Validates the non-secret environment map of a STDIO transport.
+///
+/// These values reach the child process verbatim, so they are bounded like
+/// other configuration text and may not shadow a credential binding: a silent
+/// precedence rule would let one field mask the other.
+pub(crate) fn validate_public_environment(
+    owner: &str,
+    environment: &BTreeMap<String, String>,
+    secret_bindings: &[NamedCredentialBindingV2],
+) -> Result<(), String> {
+    if environment.len() > MAX_PUBLIC_ENVIRONMENT_ENTRIES {
+        return Err(format!(
+            "{owner} environment exceeds the {MAX_PUBLIC_ENVIRONMENT_ENTRIES}-entry limit"
+        ));
+    }
+    let secret_names = secret_bindings
+        .iter()
+        .map(|binding| binding.name.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    for (name, value) in environment {
+        if !valid_environment_credential_target(name) {
+            return Err(format!(
+                "{owner} environment name '{name}' must be at most 128 ASCII letters, digits, or underscores"
+            ));
+        }
+        if value.len() > MAX_PUBLIC_ENVIRONMENT_VALUE_BYTES || value.contains('\0') {
+            return Err(format!(
+                "{owner} environment value for '{name}' must be at most {MAX_PUBLIC_ENVIRONMENT_VALUE_BYTES} bytes and contain no NUL"
+            ));
+        }
+        if secret_names.contains(&name.to_ascii_lowercase()) {
+            return Err(format!(
+                "{owner} environment name '{name}' is also a credential binding; configure each name in exactly one place"
             ));
         }
     }
@@ -2827,7 +2883,7 @@ fn validate_optional_text(label: &str, value: Option<&str>) -> Result<(), String
     value.map_or(Ok(()), |value| validate_nonempty(label, value))
 }
 
-fn validate_bounded_text(label: &str, value: &str) -> Result<(), String> {
+pub(crate) fn validate_bounded_text(label: &str, value: &str) -> Result<(), String> {
     if value.len() > MAX_STRING_BYTES {
         return Err(format!("{label} exceeds the {MAX_STRING_BYTES}-byte limit"));
     }
@@ -2853,31 +2909,6 @@ pub(crate) fn validate_http_url(label: &str, value: &str) -> Result<(), String> 
         return Err(format!(
             "{label} must be an absolute HTTP(S) URL without credentials, query, or fragment"
         ));
-    }
-    Ok(())
-}
-
-/// Rejects command-line secret material. STDIO integrations receive secrets
-/// only through named credential-backed environment bindings.
-pub(crate) fn validate_secret_free_stdio_argument(label: &str, value: &str) -> Result<(), String> {
-    validate_bounded_text(label, value)?;
-    let normalized = normalize_sensitive_name(value);
-    let looks_like_secret_value = value.starts_with("sk-")
-        || value.starts_with("ghp_")
-        || value.starts_with("github_pat_")
-        || value.to_ascii_lowercase().starts_with("bearer ");
-    if secret_like_normalized(&normalized) || looks_like_secret_value {
-        return Err(format!(
-            "{label} appears to contain authentication or credential material; use a named credential-backed environment binding instead"
-        ));
-    }
-    for candidate in [Some(value), value.split_once('=').map(|(_, suffix)| suffix)]
-        .into_iter()
-        .flatten()
-    {
-        if matches!(Url::parse(candidate), Ok(url) if matches!(url.scheme(), "http" | "https")) {
-            validate_http_url(label, candidate)?;
-        }
     }
     Ok(())
 }
@@ -2911,11 +2942,6 @@ fn validate_freeform_value(label: &str, value: &Value, depth: usize) -> Result<(
         Value::Object(object) => {
             for (key, nested) in object {
                 validate_bounded_text(&format!("{label} key"), key)?;
-                if secret_like_key(key) {
-                    return Err(format!(
-                        "{label} contains secret-like field '{key}'; store the value in the credential store and reference it through credentialBindings"
-                    ));
-                }
                 validate_freeform_value(label, nested, depth + 1)?;
             }
         }
@@ -2933,42 +2959,6 @@ fn validate_freeform_value(label: &str, value: &Value, depth: usize) -> Result<(
     Ok(())
 }
 
-fn secret_like_key(key: &str) -> bool {
-    secret_like_normalized(&normalize_sensitive_name(key))
-}
-
-fn normalize_sensitive_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn secret_like_normalized(normalized: &str) -> bool {
-    let explicit_secret_markers = [
-        "apikey",
-        "accesstoken",
-        "authtoken",
-        "authorization",
-        "authheader",
-        "bearertoken",
-        "clientsecret",
-        "password",
-        "passwd",
-        "privatekey",
-        "secret",
-    ];
-    explicit_secret_markers
-        .iter()
-        .any(|marker| normalized.contains(marker))
-        || normalized == "token"
-        || normalized.ends_with("tokenvalue")
-        || normalized == "credential"
-        || normalized.ends_with("credentials")
-        || normalized.contains("credentialref")
-}
-
 fn to_json_map(values: &BTreeMap<String, Value>) -> serde_json::Map<String, Value> {
     values
         .iter()
@@ -2979,6 +2969,37 @@ fn to_json_map(values: &BTreeMap<String, Value>) -> serde_json::Map<String, Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plain configuration (`JAVA_HOME`, a tool path, a schema flag) is what
+    /// stock MCP servers need in their environment; the child is spawned with
+    /// `env_clear()`, so it must be expressible and it must not silently shadow
+    /// a credential binding of the same name.
+    #[test]
+    fn stdio_public_environment_is_bounded_and_cannot_shadow_secrets() {
+        let mut environment = BTreeMap::new();
+        environment.insert("JAVA_HOME".to_owned(), "C:\\Program Files\\Java\\jdk-17".to_owned());
+        environment.insert("REA_MCP_OUTPUT_SCHEMA_PROFILE".to_owned(), "off".to_owned());
+        assert!(validate_public_environment("MCP STDIO", &environment, &[]).is_ok());
+
+        let secret = NamedCredentialBindingV2 {
+            name: "java_home".to_owned(),
+            credential_ref: "credential.fixture".to_owned(),
+            field: "value".to_owned(),
+        };
+        assert!(
+            validate_public_environment("MCP STDIO", &environment, std::slice::from_ref(&secret))
+                .is_err(),
+            "a public value must not mask a credential binding"
+        );
+
+        let mut invalid_name = BTreeMap::new();
+        invalid_name.insert("NOT-VALID".to_owned(), "x".to_owned());
+        assert!(validate_public_environment("MCP STDIO", &invalid_name, &[]).is_err());
+
+        let mut oversized = BTreeMap::new();
+        oversized.insert("BIG".to_owned(), "x".repeat(MAX_PUBLIC_ENVIRONMENT_VALUE_BYTES + 1));
+        assert!(validate_public_environment("MCP STDIO", &oversized, &[]).is_err());
+    }
 
     fn configured() -> SettingsConfigurationV2 {
         let mut settings = SettingsConfigurationV2::default();
@@ -3072,7 +3093,9 @@ mod tests {
                 args: args.into_iter().map(Into::into).collect(),
                 cwd,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -3324,7 +3347,9 @@ mod tests {
                 args: vec!["app-server".into()],
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: vec!["mcp.fixture".into()],
             capabilities: ExternalAgentCapabilitiesV2 {
@@ -3424,7 +3449,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_secret_values_hidden_in_freeform_configuration() {
+    fn validation_accepts_application_keys_in_freeform_configuration() {
         for (key, nested) in [
             ("apiKeyValue", Value::from("must-not-persist")),
             ("authHeader", Value::from("Bearer must-not-persist")),
@@ -3438,13 +3463,12 @@ mod tests {
             settings.providers[0].models[0]
                 .parameters
                 .insert(key.into(), nested);
-            let error = settings.validate().unwrap_err();
-            assert!(error.contains("secret-like field"), "{error}");
+            settings.validate().unwrap();
         }
     }
 
     #[test]
-    fn validation_rejects_secret_bearing_urls_and_stdio_arguments() {
+    fn validation_distinguishes_endpoint_urls_from_stdio_arguments() {
         for url in [
             "https://user@example.test/v1",
             "https://user:password@example.test/v1",
@@ -3468,7 +3492,9 @@ mod tests {
                 args: vec!["app-server".into(), "--api-key=plaintext".into()],
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -3477,8 +3503,7 @@ mod tests {
             model: None,
             reasoning_effort: None,
 });
-        let error = settings.validate().unwrap_err();
-        assert!(error.contains("credential-backed environment binding"));
+        settings.validate().unwrap();
     }
 
     #[test]
@@ -3647,7 +3672,9 @@ mod tests {
                     args: vec!["app-server".into()],
                     cwd: None,
                     env: Vec::new(),
-                },
+                
+                                                              environment: Default::default(),
+                                                          },
                 credential_bindings: Vec::new(),
                 mcp_server_ids: vec!["mcp.future".into()],
                 capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -3774,7 +3801,9 @@ mod tests {
                 args: Vec::new(),
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                         environment: Default::default(),
+                                                     },
         });
         settings
             .validate()
@@ -3896,7 +3925,9 @@ mod tests {
                 args: vec!["app-server".into()],
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -3940,7 +3971,9 @@ mod tests {
                 args: Vec::new(),
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: Vec::new(),
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -4020,7 +4053,9 @@ mod tests {
                 args: Vec::new(),
                 cwd: None,
                 env: vec![integration_binding("TOKEN")],
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: vec![integration_binding("token")],
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
@@ -4080,7 +4115,9 @@ mod tests {
                 args: Vec::new(),
                 cwd: None,
                 env: connection_bindings,
-            },
+            
+                                                          environment: Default::default(),
+                                                      },
             credential_bindings: adapter_bindings,
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),

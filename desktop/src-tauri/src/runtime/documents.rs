@@ -268,6 +268,11 @@ impl CanonicalDocuments {
         &self.settings
     }
 
+    /// Version fence for Settings writes without building a UI snapshot.
+    pub(crate) fn settings_version(&self) -> u64 {
+        self.settings_version
+    }
+
     /// Absolute runtime data root that owns this document repository.
     pub(crate) fn data_root(&self) -> &Path {
         self.repository
@@ -2741,7 +2746,9 @@ mod tests {
                 args: Vec::new(),
                 cwd: None,
                 env: Vec::new(),
-            },
+            
+                                                         environment: Default::default(),
+                                                     },
         });
         settings.data.portable_history_enabled = true;
         settings.data.detailed_capture_enabled = true;

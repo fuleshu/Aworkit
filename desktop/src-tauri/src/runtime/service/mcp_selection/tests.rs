@@ -18,7 +18,9 @@ fn fixture() -> (Value, SettingsConfigurationV2) {
             args: vec![],
             cwd: None,
             env: vec![],
-        },
+        
+                                                     environment: Default::default(),
+                                                 },
         tools: ["read", "write", "disabled"]
             .into_iter()
             .map(|name| McpToolConfiguration {
