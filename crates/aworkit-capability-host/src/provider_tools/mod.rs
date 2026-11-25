@@ -16,7 +16,9 @@ mod openai;
 mod openai_stream;
 
 pub(crate) use anthropic::{anthropic_tool_request, normalize_anthropic_tool_response};
-pub(crate) use gemini::{gemini_tool_request, normalize_gemini_tool_response};
+pub(crate) use gemini::{
+    GeminiRequestParametersV1, gemini_tool_request, normalize_gemini_tool_response,
+};
 pub(crate) use openai::{OpenAiRequestParametersV1, openai_tool_request_body, prompt_first_body};
 pub(crate) use openai_stream::consume_openai_stream;
 

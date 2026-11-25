@@ -703,8 +703,6 @@ impl DesktopRuntime {
                 .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
         )
         .map_err(WorkflowStartRefusal::from_settings_rule)?;
-        validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)
-            .map_err(WorkflowStartRefusal::from_settings_rule)?;
         Ok(())
     }
 
@@ -1346,7 +1344,8 @@ impl DesktopRuntime {
                 .as_ref()
                 .map(|project| project.project_name.clone()),
         };
-        execution_request.model_parameters = acting.model.parameters.clone();
+        // Reasoning controls the acting binding cannot honour are dropped, with a
+        // warning, once the pass snapshot is known — see below.
         if context.compaction_version.is_some() {
             execution_request.model_context = json!({"imageInput":acting.model.capabilities.iter().any(|c|c == "vision"),"contextWindow":acting.model.context_window,"maxOutputTokens":acting.model.max_output_tokens,"policy":acting.model.compaction.clone().unwrap_or_else(||json!({})),"summaryTarget":context.summary_target});
         }
@@ -1391,7 +1390,19 @@ impl DesktopRuntime {
             Some(pass) => pass.document.clone(),
             None => context.workflow_snapshot.clone(),
         };
-        for warning in pass_warnings {
+        // The acting binding decides which reasoning controls this pass can
+        // honour. Anything it cannot is dropped here, with a warning, rather
+        // than refusing the Chat: the saved workflow and Settings keep the
+        // user's intent, so remapping the tier restores it.
+        let mut model_parameters = acting.model.parameters.clone();
+        let parameter_warnings = super::model_parameters::reconcile(
+            &mut execution_request.workflow_snapshot,
+            &mut model_parameters,
+            &acting.provider,
+            &acting.model,
+        );
+        execution_request.model_parameters = model_parameters;
+        for warning in pass_warnings.into_iter().chain(parameter_warnings) {
             super::workflow_capabilities::warn(&mut execution_request.workflow_snapshot, warning);
         }
         super::workflow_capabilities::retain_available(
@@ -2229,11 +2240,6 @@ impl DesktopRuntime {
                 .tools
                 .iter()
                 .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
-        )?;
-        validate_workflow_model_parameters(
-            &workflow.document,
-            &resolved.provider,
-            &resolved.model,
         )?;
         let credential = resolved
             .credential
@@ -4352,61 +4358,6 @@ fn validate_model_capabilities(
     Ok(())
 }
 
-fn validate_workflow_model_parameters(
-    workflow: &Value,
-    provider: &ProviderConfigurationV2,
-    model: &ModelConfigurationV2,
-) -> Result<(), String> {
-    let advertised_efforts = model
-        .capabilities
-        .iter()
-        .filter_map(|capability| capability.strip_prefix("reasoning_effort:"))
-        .collect::<BTreeSet<_>>();
-    let Some(nodes) = workflow.get("nodes").and_then(Value::as_array) else {
-        return Ok(());
-    };
-    for node in nodes {
-        if !matches!(
-            node.get("type").and_then(Value::as_str),
-            Some("agent" | "model_call")
-        ) {
-            continue;
-        }
-        let Some(configuration) = node.get("configuration").and_then(Value::as_object) else {
-            continue;
-        };
-        let has_override = ["reasoningEffort", "enableThinking"]
-            .into_iter()
-            .any(|key| configuration.get(key).is_some_and(|value| !value.is_null()));
-        if !has_override {
-            continue;
-        }
-        let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
-        if !matches!(provider.kind.as_str(), "openai_compatible" | "xiaomi_mimo") {
-            return Err(format!(
-                "workflow node '{node_id}' sets OpenAI-compatible reasoning controls, but tier resolution selected the '{}' provider adapter",
-                provider.kind
-            ));
-        }
-        if provider.kind == "openai_compatible"
-            && let Some(effort) = configuration.get("reasoningEffort").and_then(Value::as_str)
-            && !advertised_efforts.is_empty()
-            && !advertised_efforts.contains(effort)
-        {
-            return Err(format!(
-                "workflow node '{node_id}' selects reasoningEffort '{effort}', but model '{}' advertised only: {}",
-                model.name,
-                advertised_efforts
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-    }
-    Ok(())
-}
-
 struct ResolvedWorkflowModel {
     tier: ModelTierConfigurationV2,
     provider: ProviderConfigurationV2,
@@ -4545,7 +4496,9 @@ fn resolve_workflow_model(
                 target.provider_id, target.model_id
             )
         })?;
-    require_consumed_provider_options(provider, Some(model))?;
+    // A parameter this adapter cannot consume is dropped, with a warning, when
+    // the pass assembles its dispatch (`model_parameters::reconcile`). It is not
+    // a reason to refuse the Chat: the model is still usable.
     resolved_model(settings, tier, provider, model)
 }
 
@@ -4840,7 +4793,10 @@ fn validate_consumed_model_parameters(
     if model.parameters.is_empty() {
         return Ok(());
     }
-    if !matches!(provider.kind.as_str(), "openai_compatible" | "xiaomi_mimo") {
+    if !matches!(
+        provider.kind.as_str(),
+        "openai_compatible" | "xiaomi_mimo" | "gemini"
+    ) {
         return Err(format!(
             "model '{}:{}' has parameters, but the '{}' adapter has no consumer for those fields",
             provider.id, model.id, provider.kind
@@ -4854,12 +4810,16 @@ fn validate_consumed_model_parameters(
                     "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
                 )
             }),
-            "enableThinking" | "preserveThinking" => value.is_boolean(),
+            "enableThinking" => value.is_boolean(),
+            "preserveThinking" => {
+                value.is_boolean()
+                    && matches!(provider.kind.as_str(), "openai_compatible" | "xiaomi_mimo")
+            }
             _ => false,
         };
         if !valid {
             return Err(format!(
-                "model '{}:{}' parameter '{}' is unsupported or invalid; OpenAI-compatible models accept reasoningEffort (none, minimal, low, medium, high, xhigh, or max), enableThinking (boolean), and preserveThinking (boolean)",
+                "model '{}:{}' parameter '{}' is unsupported or invalid; OpenAI-compatible and Gemini models accept reasoningEffort (none, minimal, low, medium, high, xhigh, or max) and enableThinking (boolean), and OpenAI-compatible models also accept preserveThinking (boolean)",
                 provider.id, model.id, key
             ));
         }
@@ -8435,47 +8395,6 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("unsupported or invalid"));
         assert_eq!(provider_port.connection_tests.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn workflow_node_reasoning_overrides_follow_resolved_provider_metadata() {
-        let mut provider =
-            saved_provider_configuration("provider.reasoning", "https://example.com/v1");
-        provider.models[0].capabilities.extend([
-            "reasoning".into(),
-            "reasoning_effort:low".into(),
-            "reasoning_effort:high".into(),
-            "thinking_toggle".into(),
-        ]);
-        let model = provider.models[0].clone();
-        let workflow = json!({
-            "nodes":[{
-                "id":"agent.1",
-                "type":"agent",
-                "configuration":{
-                    "modelTierId":"tier:balanced",
-                    "toolIds":[],
-                    "reasoningEffort":"high",
-                    "enableThinking":false
-                }
-            }]
-        });
-        validate_workflow_model_parameters(&workflow, &provider, &model).unwrap();
-
-        let mut unsupported_effort = workflow.clone();
-        unsupported_effort["nodes"][0]["configuration"]["reasoningEffort"] = json!("max");
-        assert!(
-            validate_workflow_model_parameters(&unsupported_effort, &provider, &model)
-                .unwrap_err()
-                .contains("advertised only")
-        );
-
-        provider.kind = "anthropic".into();
-        assert!(
-            validate_workflow_model_parameters(&workflow, &provider, &model)
-                .unwrap_err()
-                .contains("OpenAI-compatible")
-        );
     }
 
     #[test]

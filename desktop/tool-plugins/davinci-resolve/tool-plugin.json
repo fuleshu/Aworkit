@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 1,
+  "id": "plugin.davinci-resolve",
+  "name": "DaVinci Resolve Studio (native MCP)",
+  "version": "1.0.0",
+  "execution": {
+    "transport": "stdio",
+    "command": "C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\ResolveMCP.exe",
+    "args": [],
+    "env": []
+  },
+  "tools": [
+    {
+      "name": "get_resolve_status",
+      "description": "Check whether DaVinci Resolve is currently running and reachable, and report its version.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Call this first in a session to confirm the connection before reading or changing a project." }
+    },
+    {
+      "name": "launch_resolve",
+      "description": "Launch DaVinci Resolve and wait for it to be ready (60 second timeout).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Use only when get_resolve_status reports the application is not running. Starting the application is slow; wait for it to finish opening before inspecting a project." }
+    },
+    {
+      "name": "get_whats_new",
+      "description": "Returns DaVinci Resolve changelog entries introduced after the version or date you already know, so features newer than your training data are not missed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": { "type": "string", "description": "Last version you know (e.g. \"19.0\") or last ISO date you were trained on (e.g. \"2025-01-25\")." }
+        },
+        "required": ["since"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Call once before planning an unfamiliar workflow; Resolve adds major features between releases." }
+    },
+    {
+      "name": "search_scripting_api",
+      "description": "Search the installed Python API stubs and return the matching types and functions with their descriptions. The pattern is a case-insensitive regular expression.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string", "description": "Case-insensitive Python regular expression, e.g. \"marker\" or \"(Get|Set)Setting\"." },
+          "api": { "type": "string", "enum": ["DaVinciResolveScript.pyi", "fusion_api.pyi", "ui_api.pyi"] }
+        },
+        "required": ["pattern"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Cheapest way to discover the current API. Search here before writing any run_script body, and never guess a method name or signature from memory." }
+    },
+    {
+      "name": "get_scripting_api",
+      "description": "Return the installed Python stubs for the DaVinci Resolve, Fusion or Fusion UI API, whole, as an outline, for selected types, or written to a file whose path is returned.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "api": { "type": "string", "enum": ["DaVinciResolveScript.pyi", "fusion_api.pyi", "ui_api.pyi"], "default": "DaVinciResolveScript.pyi" },
+          "types": { "type": "array", "items": { "type": "string" }, "description": "Return only these top-level definitions, e.g. [\"Timeline\", \"TimelineItem\"]." },
+          "outline": { "type": "boolean", "default": false, "description": "Return only the list of top-level definitions with their descriptions." },
+          "as_file": { "type": "boolean", "default": false, "description": "Write the whole stub to a file and return its path instead of its contents." }
+        },
+        "required": []
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Use outline=true or types=[...] instead of fetching a whole 163 KiB stub. Use as_file=true when you can read and grep local files, then read the returned path." }
+    },
+    {
+      "name": "get_scripting_docs",
+      "description": "Return DaVinci Resolve developer documentation, in full or one section: the scripting guide, the DCTL language reference, or the Fusion tool list and reference.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document": { "type": "string", "enum": ["README.md", "DCTLReadme.txt", "FusionTools.md", "FusionToolReference.md"], "default": "README.md" },
+          "section": { "type": "string", "default": "TOC", "description": "Markdown heading to return; default \"TOC\", empty string for the whole document." },
+          "as_file": { "type": "boolean", "default": false, "description": "Write the document to a file and return its path instead of its contents." }
+        },
+        "required": []
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Ask for the TOC first, then one section. FusionToolReference.md is 1.3 MiB, so always use a section or as_file=true for it." }
+    },
+    {
+      "name": "run_script",
+      "description": "Execute a sandboxed Python script with the DaVinciResolveScript API. `resolve` and `project` are provided; assign your output to `result` to return structured data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script": { "type": "string", "description": "Python script to execute." },
+          "timeout": { "type": "integer", "description": "Timeout in seconds (default 10, max 60)." }
+        },
+        "required": ["script"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": true },
+      "options": { "instructions": "The main editing tool: nearly every project, timeline, media pool and render operation goes through here. Discover the API with search_scripting_api first, keep the script short, and set `result` to a JSON-serialisable dict. Read the state before changing it, and re-read afterwards to confirm the intended clips or ranges actually changed." }
+    },
+    {
+      "name": "run_script_unsafe",
+      "description": "Execute an unrestricted Python script with the DaVinciResolveScript API plus full filesystem, network and subprocess access. Disabled by default.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script": { "type": "string", "description": "Python script to execute." },
+          "timeout": { "type": "integer", "description": "Timeout in seconds (default 10, max 60)." }
+        },
+        "required": ["script"]
+      },
+      "enabled": false,
+      "annotations": { "readOnlyHint": false, "destructiveHint": true },
+      "options": { "instructions": "Disabled on purpose: it bypasses the sandbox around run_script. Enable it in Settings only for a task that genuinely needs file or network access, and prefer an Aworkit file tool for plain file work." }
+    },
+    {
+      "name": "describe_grade",
+      "description": "Describe what the nodes of a grade contain, per node, instead of rendering frames and comparing them by eye. Sources: the clip under the playhead, the timeline grade, or the current photo.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string", "enum": ["timeline_item", "timeline", "photo"], "default": "timeline_item" },
+          "layer": { "type": "integer", "description": "1-based node stack layer to describe." },
+          "timecode": { "type": "string", "description": "Timeline timecode \"HH:MM:SS:FF\" for a clip other than the one under the playhead. The playhead is never moved." },
+          "track": { "type": "integer", "description": "1-based video track, counting from the bottom as V1 does." }
+        },
+        "required": []
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Prefer this over get_image when the question is what a grade contains (nodes, LUTs, tools, CDLs) rather than what it looks like." }
+    },
+    {
+      "name": "get_image",
+      "description": "Return a rendered, graded and color-managed frame as an image, plus basic grade and color science information. Supports a region of interest for detail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string", "enum": ["timeline", "timeline_item", "media_pool_clip", "photo"], "default": "timeline" },
+          "timecode": { "type": "string", "description": "Timeline timecode \"HH:MM:SS:FF\"; defaults to the playhead, which is never moved." },
+          "frame_offset": { "type": "integer", "description": "0-based frame offset into the source; an alternative to timecode for source \"timeline\"." },
+          "clip_name": { "type": "string", "description": "Used only for the \"media_pool_clip\" source." },
+          "max_dimension": { "type": "integer", "default": 1024, "description": "Caps the longer edge in pixels (max 4096)." },
+          "roi_x": { "type": "number", "description": "Left edge of the region as a fraction of the frame width." },
+          "roi_y": { "type": "number", "description": "Top edge of the region as a fraction of the frame height." },
+          "roi_width": { "type": "number", "description": "Region width as a fraction of the frame width." },
+          "roi_height": { "type": "number", "description": "Region height as a fraction of the frame height." }
+        },
+        "required": []
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Use media_pool_clip as the ungraded before reference and timeline for the graded after. Crop with the roi_* fractions to inspect detail at max_dimension instead of raising the resolution." }
+    },
+    {
+      "name": "get_thumbnails",
+      "description": "Return thumbnail frames of one source as a single labelled grid image, for judging a shot, a range or an album at a glance.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string", "enum": ["timeline", "timeline_item", "media_pool_clip", "photo"], "default": "timeline" },
+          "count": { "type": "integer", "default": 12, "description": "How many frames to show, 1 to 48." },
+          "start": { "type": ["integer", "string"], "description": "First frame of the span, 0-based offset or \"HH:MM:SS:FF\" for source \"timeline\"." },
+          "end": { "type": ["integer", "string"], "description": "Last frame of the span, in the same form as start." },
+          "clip_name": { "type": "string", "description": "Used only for the \"media_pool_clip\" source." },
+          "max_dimension": { "type": "integer", "default": 1568, "description": "Caps the longer edge of the whole sheet in pixels (max 4096)." }
+        },
+        "required": []
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Prefer one grid over repeated get_image calls when the question spans a range. Cell labels are the timecodes that get_image takes to render one full size." }
+    },
+    {
+      "name": "list_luts",
+      "description": "List LUT and DCTL files recursively in the global LUT directory.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "enum": ["all", "dctl", "lut"], "default": "all" }
+        },
+        "required": []
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Check which LUTs and DCTLs already exist before generating or writing one." }
+    },
+    {
+      "name": "read_dctl",
+      "description": "Return the source of a .dctl file in the global LUT directory.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File name relative to the global LUT directory, e.g. \"MCP/cool.dctl\"." }
+        },
+        "required": ["path"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Read an existing DCTL before editing it, so the whole file is rewritten rather than partly reconstructed." }
+    },
+    {
+      "name": "write_dctl",
+      "description": "Compile and write (or overwrite) a .dctl file in the MCP LUT directory. A DCTL resolves as a node in the grader.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File name, e.g. \"cool.dctl\"." },
+          "content": { "type": "string", "description": "DCTL source code to write." }
+        },
+        "required": ["path", "content"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Read the DCTL reference with get_scripting_docs document \"DCTLReadme.txt\" first. Writing an existing name overwrites that file." }
+    },
+    {
+      "name": "generate_lut",
+      "description": "Generate a .cube 3D LUT by evaluating a sandboxed Python transform function on every lattice point, written to the MCP LUT directory.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": ".cube file name, e.g. \"warm.cube\"." },
+          "size": { "type": "integer", "description": "Cube size per axis, e.g. 33. Common values: 17, 33, 65." },
+          "transform": { "type": "string", "description": "Python function body receiving r, g, b floats in [0,1] and returning an (r, g, b) tuple. math is pre-imported." }
+        },
+        "required": ["path", "size", "transform"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Keep the transform algebraically simple and monotonic; a 65-point cube is 274k evaluations, so state clearly which size you chose and why." }
+    },
+    {
+      "name": "delete_lut_file",
+      "description": "Delete a LUT or DCTL file from the MCP LUT directory, identified by its extension.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File name, e.g. \"warm.cube\" or \"cool.dctl\"." }
+        },
+        "required": ["path"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": true },
+      "options": { "instructions": "Only delete a file you created in this session unless the user named it explicitly; list_luts first to confirm the exact name." }
+    },
+    {
+      "name": "list_extras_packages",
+      "description": "List Extras Download Manager packages available for this Resolve version with their installation status. Some scripting API calls need them (mostly AI models).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Check here when a scripting call reports a missing model or package." }
+    },
+    {
+      "name": "install_extras_package",
+      "description": "Queue downloading and installing Extras Download Manager packages named exactly as list_extras_packages reports them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "names": { "type": "array", "items": { "type": "string" }, "description": "Package names exactly as reported by list_extras_packages." }
+        },
+        "required": ["names"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Ask the user before starting a download: these are large. Poll list_extras_packages for progress." }
+    }
+  ]
+}

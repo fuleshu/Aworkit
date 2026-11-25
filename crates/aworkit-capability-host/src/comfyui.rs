@@ -23,9 +23,14 @@ use thiserror::Error;
 /// Endpoint Aworkit assumes when the user has not configured one.
 pub const DEFAULT_COMFYUI_ENDPOINT: &str = "http://127.0.0.1:8188";
 
-/// Largest accepted JSON response. `/object_info` for a large node pack is the
-/// biggest legitimate payload; it stays well below this bound.
-const MAXIMUM_JSON_BYTES: usize = 8 * 1024 * 1024;
+/// Largest accepted `/object_info` catalog. The catalog grows with every
+/// installed node pack, not with the user's own data, so a normal custom-node
+/// install already runs to several megabytes and must not share the history
+/// bound.
+const MAXIMUM_OBJECT_INFO_BYTES: usize = 32 * 1024 * 1024;
+/// Largest accepted `/history` response. A finished prompt's entry carries
+/// filenames and node metadata, never the catalog, so it stays bounded tightly.
+const MAXIMUM_HISTORY_BYTES: usize = 8 * 1024 * 1024;
 /// Largest accepted `GET /view` image.
 pub const MAXIMUM_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 /// Bound for the small control endpoints (`/system_stats`, `/prompt`).
@@ -368,7 +373,7 @@ impl ComfyUiClient {
     ///
     /// Returns a named transport, status, bound or payload error.
     pub fn object_info(&self) -> Result<Value, ComfyUiError> {
-        self.get_json("/object_info", MAXIMUM_JSON_BYTES)
+        self.get_json("/object_info", MAXIMUM_OBJECT_INFO_BYTES)
     }
 
     /// `POST /prompt`, queueing one API-format workflow.
@@ -397,7 +402,7 @@ impl ComfyUiClient {
     /// Returns a named transport, status, bound or payload error.
     pub fn history(&self, prompt_id: &str) -> Result<Value, ComfyUiError> {
         let encoded: String = url_encode(prompt_id);
-        self.get_json(&format!("/history/{encoded}"), MAXIMUM_JSON_BYTES)
+        self.get_json(&format!("/history/{encoded}"), MAXIMUM_HISTORY_BYTES)
     }
 
     /// Polls `/history/{prompt_id}` until the entry carries outputs or the
@@ -755,6 +760,32 @@ mod tests {
             .queue_prompt(&json!({"3": {"class_type": "KSampler"}}), "aworkit")
             .unwrap();
         assert_eq!(prompt, "fixture-prompt");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn object_info_reads_a_catalog_larger_than_the_history_bound() {
+        // A custom-node install produces a catalog past 8 MiB while a history
+        // entry stays small, so the two payloads hold separate bounds.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server: JoinHandle<()> = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut buffer).unwrap();
+            let body = json!({
+                "FixtureNode": {"input": {"required": {"padding": ["x".repeat(9 * 1024 * 1024)]}}}
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let client = ComfyUiClient::new(&format!("http://{address}")).unwrap();
+        let catalog = client.object_info().unwrap();
+        assert!(catalog.get("FixtureNode").is_some());
         server.join().unwrap();
     }
 

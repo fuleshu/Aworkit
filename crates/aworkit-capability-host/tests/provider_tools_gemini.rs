@@ -235,3 +235,49 @@ fn gemini_rejects_malformed_function_arguments_without_partial_events() {
     assert!(events.is_empty());
     server.join().expect("Gemini malformed fixture");
 }
+
+#[test]
+fn gemini_tool_turn_sends_reasoning_controls_as_thinking_config() {
+    let (origin, server) = start_fixture(1, |_index, request| {
+        let body: Value = serde_json::from_slice(&request.body).expect("Gemini request JSON");
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"],
+            json!({"thinkingLevel":"HIGH"})
+        );
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], 2048);
+        FixtureResponse::json(json!({
+            "candidates":[{
+                "finishReason":"STOP",
+                "content":{"role":"model","parts":[{"text":"ok"}]}
+            }],
+            "usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1}
+        }))
+    });
+    let provider = GoogleGeminiProvider::new(
+        GoogleGeminiProviderConfig::new(
+            "binding.gemini.thinking",
+            "wire-v1",
+            &origin,
+            "gemini-3-flash-preview",
+            Some("gemini-tool-secret".to_owned()),
+            GoogleGeminiLimitsV1::default(),
+        )
+        .expect("Gemini thinking config"),
+    )
+    .expect("Gemini thinking provider");
+    let mut request = request(Vec::new());
+    request
+        .parameters
+        .insert("reasoningEffort".into(), json!("high"));
+    request
+        .parameters
+        .insert("maxOutputTokens".into(), json!(2048));
+    let events = execute(&provider, &request).expect("thinking Gemini turn");
+    assert_eq!(
+        events[0],
+        ModelToolEventV1::AssistantOutput {
+            text: "ok".to_owned()
+        }
+    );
+    server.join().expect("Gemini thinking fixture");
+}

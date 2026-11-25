@@ -264,6 +264,98 @@ fn a_stored_binding_hash_mismatch_is_still_rejected() {
 }
 
 #[test]
+fn reasoning_controls_a_tier_cannot_consume_warn_instead_of_blocking_the_chat() {
+    // The failure policy's dispatch rule: an advisory field the acting adapter
+    // cannot honour is dropped and reported, never a reason to disable Send or
+    // end the message. Every bundled workflow asks for an effort, so a tier on
+    // an adapter with no reasoning parameters used to refuse to start.
+    let root = TempDir::new().unwrap();
+    let provider = Arc::new(FixtureProvider::new());
+    let mut runtime = runtime(&root, provider.clone());
+    configure(&mut runtime);
+    let mut settings = runtime.settings_v2_snapshot().settings;
+    for configured in &mut settings.providers {
+        configured.kind = "anthropic".into();
+    }
+    runtime
+        .settings_v2_commit(SettingsV2CommitInput {
+            command_id: "settings.p1.anthropic".into(),
+            expected_version: runtime.settings_v2_snapshot().version,
+            settings,
+        })
+        .unwrap();
+
+    let created = runtime
+        .workflow_duplicate(WorkflowDuplicateInput {
+            command_id: "workflow.p1.reasoning.create".into(),
+            workflow_id: "workflow.simple-chat".into(),
+            name: "Reasoning controls".into(),
+        })
+        .unwrap();
+    let mut document = runtime.workflow_snapshot_for(created.workflow_id.clone()).document;
+    document["nodes"][1]["configuration"]["reasoningEffort"] = json!("high");
+    document["nodes"][1]["configuration"]["enableThinking"] = json!(false);
+    runtime
+        .workflow_commit(WorkflowCommitInput {
+            command_id: "workflow.p1.reasoning.save".into(),
+            expected_version: created.current_version,
+            document,
+            workflow_id: Some(created.workflow_id.clone()),
+        })
+        .unwrap();
+
+    // Send stays enabled: the mismatch is an advisory, never a verdict.
+    let verdict = runtime
+        .workflow_snapshot_for(created.workflow_id.clone())
+        .execution_verdict
+        .expect("the core answers per workflow");
+    assert!(verdict.executable, "{verdict:?}");
+    assert!(verdict.rule.is_none(), "{verdict:?}");
+
+    runtime
+        .command(UiCommandInput {
+            schema_version: 1,
+            command_id: "chat.p1.reasoning.start".into(),
+            expected_version: 0,
+            action: "start".into(),
+            target_id: None,
+            payload: json!({
+                "workflowId": created.workflow_id.clone(),
+                "input": "hello",
+                "attachments": [],
+            }),
+        })
+        .unwrap();
+
+    let requests = provider.execution_requests.lock().unwrap();
+    let snapshot = &requests[0].workflow_snapshot;
+    let warnings = snapshot["capabilityWarnings"]
+        .as_array()
+        .expect("the pass reports what it dropped");
+    assert!(
+        warnings.iter().any(|warning| warning.as_str().is_some_and(|warning| {
+            warning.contains("agent.1") && warning.contains("anthropic")
+        })),
+        "{warnings:?}"
+    );
+    // Dropped for this pass, so the provider never sees a control it rejects.
+    assert_eq!(
+        snapshot["nodes"][1]["configuration"]["reasoningEffort"],
+        Value::Null
+    );
+    assert_eq!(
+        snapshot["nodes"][1]["configuration"]["enableThinking"],
+        Value::Null
+    );
+    // The saved workflow keeps the user's intent for a tier that can honour it.
+    let saved = runtime.workflow_snapshot_for(created.workflow_id).document;
+    assert_eq!(
+        saved["nodes"][1]["configuration"]["reasoningEffort"],
+        json!("high")
+    );
+}
+
+#[test]
 fn a_workflow_without_a_model_consuming_node_is_refused_with_the_fix() {
     let root = TempDir::new().unwrap();
     let mut runtime = runtime(&root, Arc::new(FixtureProvider::new()));

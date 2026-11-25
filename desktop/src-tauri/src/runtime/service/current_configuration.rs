@@ -121,7 +121,6 @@ impl DesktopRuntime {
             super::resolve_single_model_binding(self.documents.settings(), workflow)?
                 .ok_or_else(|| "the workflow has no model-consuming node".to_owned())?;
         super::validate_model_capabilities(&resolved.provider, &resolved.model, requires_tools)?;
-        super::validate_workflow_model_parameters(workflow, &resolved.provider, &resolved.model)?;
         if resolved.model.context_window.is_none() {
             // The frozen record already learned this exact binding's capacity, so
             // an unchanged binding reuses it instead of paying for discovery again

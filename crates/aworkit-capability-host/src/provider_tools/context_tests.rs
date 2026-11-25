@@ -25,7 +25,7 @@ fn completion_reminder_preserves_text_without_inventing_tool_results() {
         assert_eq!(messages[1]["role"], "assistant");
         assert_eq!(messages[2]["content"], "Collect job.test before finishing");
     }
-    let gemini = gemini_tool_request(&request).unwrap();
+    let gemini = gemini_tool_request(&request, "gemini-fixture").unwrap();
     assert_eq!(gemini["contents"].as_array().unwrap().len(), 3);
     assert_eq!(gemini["contents"][1]["parts"][0]["text"], "Done");
     let mut invalid = request;
@@ -107,7 +107,7 @@ fn historical_instruction_references_keep_position_without_callable_schemas() {
         assert_eq!(body["messages"].as_array().unwrap().len(), 4);
         assert!(!body.to_string().contains("event.instructions"));
     }
-    let gemini = gemini_tool_request(&request).unwrap();
+    let gemini = gemini_tool_request(&request, "gemini-fixture").unwrap();
     assert!(gemini.get("tools").is_none());
     assert_eq!(
         gemini["contents"][1]["parts"][0]["text"],
@@ -167,7 +167,7 @@ fn durable_catalog_and_invocation_context_keep_append_only_provider_order() {
     let openai =
         openai_tool_request("fixture", &request, &OpenAiRequestParametersV1::default()).unwrap();
     let anthropic = anthropic_tool_request("fixture", 100, &request).unwrap();
-    let gemini = gemini_tool_request(&request).unwrap();
+    let gemini = gemini_tool_request(&request, "gemini-fixture").unwrap();
     for body in [openai, anthropic] {
         let messages = body["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 6);
@@ -252,7 +252,7 @@ fn edited_context_keeps_assistant_user_and_image_order_for_every_provider() {
             .iter()
             .any(|part| part["type"] == "image")
     );
-    let gemini = gemini_tool_request(&request).unwrap();
+    let gemini = gemini_tool_request(&request, "gemini-fixture").unwrap();
     assert_eq!(gemini["contents"][1]["role"], "model");
     assert_eq!(gemini["contents"][1]["parts"][0]["text"], "Edited answer");
     assert_eq!(gemini["contents"][2]["role"], "user");

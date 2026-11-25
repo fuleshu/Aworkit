@@ -31,6 +31,7 @@ mod image_files;
 mod images;
 mod mcp;
 mod mcp_tools;
+mod model_parameters;
 mod model_tool_loop;
 mod pipeline;
 mod plan_contract;

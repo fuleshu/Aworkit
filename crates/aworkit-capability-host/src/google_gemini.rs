@@ -16,7 +16,9 @@ use crate::{
     CancellationToken, ModelEventV1, ModelRequestV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
     model_tools::{validate_tool_events, validate_tool_request},
-    provider_tools::{gemini_tool_request, normalize_gemini_tool_response},
+    provider_tools::{
+        GeminiRequestParametersV1, gemini_tool_request, normalize_gemini_tool_response,
+    },
     provider_transport::{BoundedJsonClient, BoundedJsonError, validate_base_url, validate_limits},
 };
 
@@ -235,10 +237,16 @@ impl GoogleGeminiProvider {
         cancellation: &CancellationToken,
     ) -> Result<NormalizedCompletion, GoogleGeminiProviderError> {
         let (system_instruction, contents) = normalize_messages(&request.input)?;
+        let parameters = GeminiRequestParametersV1::from_parameters(&request.parameters)
+            .map_err(|()| GoogleGeminiProviderError::InvalidRequestParameters)?;
         let body = GenerateContentRequest {
             system_instruction,
             contents,
-            generation_config: GenerationConfig { candidate_count: 1 },
+            generation_config: GenerationConfig {
+                candidate_count: 1,
+                max_output_tokens: parameters.max_output_tokens(),
+                thinking_config: parameters.thinking_config(self.config.model()),
+            },
         };
         let request = self.authorize(
             self.transport
@@ -279,7 +287,7 @@ impl GoogleGeminiProvider {
         cancellation: &CancellationToken,
     ) -> Result<Vec<ModelToolEventV1>, ProviderError> {
         validate_tool_request(request)?;
-        let body = gemini_tool_request(request)?;
+        let body = gemini_tool_request(request, self.config.model())?;
         let transport_request = self
             .authorize(
                 self.transport
@@ -416,6 +424,8 @@ pub enum GoogleGeminiProviderError {
     InvalidLimits,
     #[error("Gemini request messages are invalid")]
     InvalidRequest,
+    #[error("Gemini request parameters are unsupported or invalid")]
+    InvalidRequestParameters,
     #[error("Gemini completion response is incomplete or unsupported")]
     InvalidCompletionResponse,
     #[error("Gemini HTTP client could not be constructed")]
@@ -466,6 +476,10 @@ struct GenerateContentRequest {
 #[serde(rename_all = "camelCase")]
 struct GenerationConfig {
     candidate_count: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_config: Option<Value>,
 }
 
 #[derive(Deserialize, Serialize)]

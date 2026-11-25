@@ -42,6 +42,13 @@ when a node type or key is added or removed, this file must change with it.
 | `compaction` (`agent`) | object with `auto` (boolean), `pruneToolResults` (boolean), `thresholdChars` (1..=4 MiB), `headChars`/`tailChars` (0..=1 MiB) |
 | `predicate` (`condition`) | predicate object (see below) |
 
+`reasoningEffort` and `enableThinking` reach any model tier. An OpenAI-compatible or Xiaomi MiMo
+tier sends them as `reasoning_effort` and `chat_template_kwargs`; a Gemini tier translates them into
+`generationConfig.thinkingConfig`, using `thinkingLevel` on Gemini 3 and later and `thinkingBudget`
+on earlier models. A tier whose adapter has no consumer for them still runs: the pass drops the
+control and reports a capability warning, so the saved node keeps the setting for a tier that can
+honour it.
+
 ## Predicates
 
 A predicate is `{"kind": ...}` where `kind` is one of:
