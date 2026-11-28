@@ -384,6 +384,15 @@ impl From<AnthropicMessagesProviderError> for ProviderError {
             AnthropicMessagesProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             AnthropicMessagesProviderError::RequestTimedOut => Self::RequestTimedOut,
             AnthropicMessagesProviderError::Transport => Self::TransportFailed,
+            AnthropicMessagesProviderError::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            } => Self::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            },
             other => Self::Failed(other.to_string()),
         }
     }
@@ -419,7 +428,11 @@ pub enum AnthropicMessagesProviderError {
     Transport,
     /// The provider's own bounded diagnostic, when it sent one.
     #[error("Anthropic provider returned HTTP status {status}{detail}")]
-    HttpStatus { status: u16, detail: String },
+    HttpStatus {
+        status: u16,
+        detail: String,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("Anthropic response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("Anthropic response is not valid JSON")]
@@ -571,9 +584,15 @@ fn map_transport_error(error: BoundedJsonError) -> AnthropicMessagesProviderErro
         BoundedJsonError::ContextWindowExceeded => {
             AnthropicMessagesProviderError::ContextWindowExceeded
         }
-        BoundedJsonError::HttpStatus { status, detail } => {
-            AnthropicMessagesProviderError::HttpStatus { status, detail }
-        }
+        BoundedJsonError::HttpStatus {
+            status,
+            detail,
+            retry_after_seconds,
+        } => AnthropicMessagesProviderError::HttpStatus {
+            status,
+            detail,
+            retry_after_seconds,
+        },
         BoundedJsonError::ResponseTooLarge => AnthropicMessagesProviderError::ResponseTooLarge,
         BoundedJsonError::InvalidJson => AnthropicMessagesProviderError::InvalidJson,
     }

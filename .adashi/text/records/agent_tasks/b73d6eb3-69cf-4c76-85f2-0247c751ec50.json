@@ -1,0 +1,64 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/frozen_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_tools.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"docs/adashi/design-165a49e63474144d90e0148079f44330c0ee21f9d7a05e97a4423a2a7be479e1.md\"]",
+    "completed_at": "2026-11-28 09:47:00",
+    "completion_memo": {
+      "lines": [
+        "Implemented items 1–4 of the design doc markdown:aworkit.job_resolution_contract.\n",
+        "\n",
+        "1. tool.job.release (job_release) is a first-class native tool: manifest entry with schema {jobId, reason?, discardOutput?}, contract validation, descriptor matrix entry (IdempotentWrite), freeze routing, and the settings validation list. `JobsRegistry::release` records a durable `released` disposition (serde default on the record), refuses a running job with a pointer to job_stop/job_keep, is idempotent (`alreadyReleased`), keeps the owner boundary, and deletes stdout/stderr only when `discardOutput` is set — recording the byte counts in `discardedOutput` and zeroing the snapshot/cursor so a later read cannot resume a gone offset. Release is approval-free like job_stop.\n",
+        "\n",
+        "2. job_keep is total. A finished job answers `{kept:false, alreadyFinished:true, status, hint}` naming job_release; the same answer is used when the runner is gone (Gone) or attached but exited, so an after-restart job no longer produces \"job is no longer attached to a live process\". The manifest description/instructions say so.\n",
+        "\n",
+        "3. The completion notice treats a terminal job as resolved when collected OR released, and its trailer now names job_release and mode=tail. Eviction accepts terminal jobs that are collected or released; `job_list` reports released, discardedOutput, stdoutBytes and stderrBytes.\n",
+        "\n",
+        "4. job_output reports stdoutBytes, stderrBytes and remainingBytes, and accepts mode=read|tail. A tail read reads the last maximumBytes of each non-empty stream (evenly split), advances the cursor to the end, reports omittedBytes, trims a mid-line start to the first complete line, and leaves moreOutput truthful if newer output arrived. validate() rejects an unknown mode.\n",
+        "\n",
+        "Design model: component aworkit.trusted_core.job_registry description and the uml.tool_supervision.soft_wait_proposal flow diagram were updated in the same save as the new document; nothing outside the Chat Job Registry component changed.\n",
+        "\n",
+        "Verification: `cargo test --lib tool_loop::jobs::` → 19 passed (6 new: release/notice, discard, running refusal + keep answer, keep after restart, tail window, read totals; plus validate mode/release). Full desktop lib suite: 671 passed, 1 failed — only `runtime::service::tool_plugins::tests::frozen_mcp_transport_keeps_only_referenced_metadata_and_passes_history_guard`, which fails independently of this change (it asserts a history payload guard rejects an injected `credentials` key; no job or ComfyUI code is involved, and it failed before this task began). Two existing expectations were updated because the implied job-control set legitimately grew by job_release: the large-catalog tool count 273→274 and the subagent child selection, which now derives its implied controls from implied_job_control_ids instead of hardcoding a stale list.\n",
+        "\n",
+        "Note: the running desktop instance still uses the old manifest, so its completion notice showed the old trailer during this task; the new wording and job_release appear after the next launch. No release bundle was built, per project instructions."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-11-28 09:37:39",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Evidence: chat.e663e1a69bd6c316dd372696edb10dda50a2f271. A finished shell job with 526 KB of captured stdout was reported by the completion barrier as \"finished; output not collected\". The only exits were job_output (drain it), job_input, job_stop, or job_keep — and job_keep is running-only, so it failed with \"job is no longer attached to a live process\". The agent then shrank Aworkit's own stdout.log with SetLength so moreOutput became false and the job counted as collected without being read. The barrier had no cheap legal exit.\n",
+        "\n",
+        "Implement per design doc markdown:aworkit.job_resolution_contract:\n",
+        "\n",
+        "1. New native tool job_release (capability tool.job.release, provider name job_release) taking { jobId, reason?, discardOutput? }.\n",
+        "   - Records a durable `released` disposition on the job record (serde default for old rows).\n",
+        "   - A released job is excluded from completion_notice_scoped whether or not its output was read; `collected` stays truthful.\n",
+        "   - Idempotent; refused while the job is running with a pointer to job_stop/job_keep; owner/scope isolation as every other control.\n",
+        "   - discardOutput=true deletes the captured stdout/stderr and records the byte counts at discard; status, exit code, timings and byte counts stay in the record and in job_list.\n",
+        "   - Approved through the existing broker path like job_stop (no new approval policy).\n",
+        "\n",
+        "2. job_keep is total: running keeps as today; finished returns {kept:false, alreadyFinished:true, hint:\"...\"} naming job_release; a detached runner returns the same shape with its cause, never an error.\n",
+        "\n",
+        "3. Completion notice: unresolved = running && !kept, or terminal && !collected && !released. Trailer names job_release as the way to acknowledge without reading. Eviction (admit_new_job) accepts terminal jobs that are collected OR released.\n",
+        "\n",
+        "4. job_output: report stdoutBytes, stderrBytes and remainingBytes; accept mode=\"tail\" (and mode=\"read\" for the existing behaviour) returning the last maximumBytes of each non-empty stream split evenly, cursor advanced to end, omittedBytes reported; reject an unknown mode in validate. Keep the default maximumBytes at 65536 and the 262144 ceiling.\n",
+        "\n",
+        "Acceptance: job_output keeps cursor/moreOutput compatibility; a tail read never reports moreOutput=true; the completion notice disappears after release without any read; job_list exposes released/discarded state and sizes.\n",
+        "\n",
+        "Verification: registry unit tests for release (notice, discard, running refusal, idempotency), keep-on-finished, tail window and remaining bytes, validate() mode handling; full desktop lib suite must keep its current pass set."
+      ]
+    },
+    "id": 127821584571,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Job resolution: add job_release, make job_keep total, and bound/describe job_output reads",
+    "updated_at": "2026-11-28 09:47:00"
+  },
+  "deleted": false,
+  "identity": "b73d6eb3-69cf-4c76-85f2-0247c751ec50",
+  "schemaVersion": 1
+}

@@ -1066,6 +1066,11 @@ fn main() {
             app.manage(aworkit_desktop::documents_extras::DocumentsExtrasRoot(
                 app_data_root.clone(),
             ));
+            // A panic leaves a bounded diagnostic trail that survives the
+            // restart, so an abrupt exit is explainable instead of silent.
+            aworkit_desktop::runtime::crash_report::install(
+                app_data_root.join("crash-report.json"),
+            );
             aworkit_desktop::documents_extras::start(app.handle().clone(), app_data_root.clone());
             desktop_bootstrap::start(app.handle(), app_data_root);
             Ok(())

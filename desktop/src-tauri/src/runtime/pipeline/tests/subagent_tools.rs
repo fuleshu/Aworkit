@@ -272,6 +272,14 @@ fn subagent_inherits_exact_parent_selection_and_executes_write_edit_shell_python
     let child = &observed[1];
     let mut expected: Vec<_> = ids[1..].to_vec();
     expected.push(MCP_FIXTURE_CAPABILITY);
+    // A bound host shell or Python capability implies its job controls, so the
+    // child keeps them even though the parent selection never named them.
+    let bound = ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+    for implied in crate::runtime::tool_loop::implied_job_control_ids(&bound) {
+        if !expected.iter().any(|id| *id == implied) {
+            expected.push(implied);
+        }
+    }
     assert_eq!(
         child
             .tools

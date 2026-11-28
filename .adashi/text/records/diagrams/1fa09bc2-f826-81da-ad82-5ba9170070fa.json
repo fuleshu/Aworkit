@@ -15,25 +15,27 @@
         " B --> C{\"Complete before soft wait?\"}\n",
         " C -->|Yes| D[\"Return terminal result and acknowledge collected output\"]\n",
         " C -->|No| E[\"Return job id, kind, cursor, partial output and running state\"]\n",
-        " E --> F[\"Agent uses job_output, job_input, job_stop or job_keep\"]\n",
+        " E --> F[\"Agent uses job_output, job_input, job_stop, job_keep or job_release\"]\n",
         " F --> G[\"Runner retains control after the parent turn ends\"]\n",
         " G --> F\n",
         " G --> H[\"Persist terminal state and queue the owner completion notice\"]\n",
         " H --> I[\"job_output collects the final result\"]\n",
         " F --> J[\"Agent proposes final answer\"]\n",
-        " J --> K{\"Any running or uncollected jobs?\"}\n",
-        " K -->|Yes| L[\"Nudge owner to collect, stop or explicitly retain\"]\n",
+        " J --> K{\"Any running or unresolved jobs?\"}\n",
+        " K -->|Yes| L[\"Nudge owner to collect, stop, release or explicitly retain\"]\n",
         " L --> F\n",
         " K -->|No| M[\"Accept final answer\"]\n",
         " L --> N[\"job_keep records deliberate retention; a stopped child scope stays closed\"]\n",
         " N --> M\n",
+        " L --> R[\"job_release acknowledges a finished job, optionally discarding its captured logs\"]\n",
+        " R --> M\n",
         " B --> O[\"User Stop cancels every owned runner; a child job also closes its scope\"]\n",
         " O --> H\n",
         " B --> P[\"Crash recovery marks previous live jobs interrupted without replay\"]"
       ]
     },
     "title": "Chat jobs, soft waits and completion",
-    "updated_at": "2026-09-21 15:35:17",
+    "updated_at": "2026-11-28 09:37:27",
     "workspace_id": {
       "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
     }

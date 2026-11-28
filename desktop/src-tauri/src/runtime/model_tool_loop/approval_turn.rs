@@ -174,3 +174,5 @@ pub(super) fn suspend(
 mod tests;
 #[cfg(test)]
 mod bound_recovery_tests;
+#[cfg(test)]
+mod incident_regression_tests;

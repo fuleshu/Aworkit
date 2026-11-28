@@ -7,7 +7,7 @@ mod tests;
 use super::*;
 use aworkit_capability_host::ProcessSpecV1;
 pub(super) use contract::*;
-pub(super) use registry::{ChildJobHandle, ChildJobInfo, JobRegistry};
+pub(super) use registry::{ChildJobHandle, ChildJobInfo, ChildLiveV1, JobRegistry};
 
 /// The ownership scope of a job the acting Agent starts.
 ///
@@ -62,7 +62,22 @@ impl FileToolDispatcherV1 {
             .runtime
             .jobs
             .control_scoped(owner, self.context.delegation.as_ref().map(StableId::as_str), operation, args, cancellation)?;
-        Ok((value, format!("{operation} completed.")))
+        // A release reports what changed, so the Agent never has to read the
+        // job back to learn whether its output still exists.
+        let summary = if operation == "job_release" {
+            let freed = value["discardedOutput"]["stdoutBytes"]
+                .as_u64()
+                .unwrap_or(0)
+                + value["discardedOutput"]["stderrBytes"].as_u64().unwrap_or(0);
+            if freed > 0 {
+                format!("Released the job and discarded {freed} captured byte(s).")
+            } else {
+                "Released the job; it no longer needs collecting.".to_owned()
+            }
+        } else {
+            format!("{operation} completed.")
+        };
+        Ok((value, summary))
     }
 
     /// Applies the shared job control surface to a delegated child job.
@@ -77,7 +92,7 @@ impl FileToolDispatcherV1 {
         let owner = &self.context.chat_id;
         let args = &self.record.call.arguments;
         match operation {
-            "job_output" | "job_keep" => {
+            "job_output" | "job_keep" | "job_release" => {
                 let value =
                     self.runtime
                         .jobs
@@ -145,12 +160,7 @@ impl FileToolDispatcherV1 {
         if frame.status == super::subagent::ChildStatusV1::Cancelled {
             return Ok(());
         }
-        let updated = super::subagent::SubagentChildFrameV1 {
-            head_revision: frame.head_revision.saturating_add(1),
-            status: super::subagent::ChildStatusV1::Cancelled,
-            updated_at: crate::runtime::history::now_label(),
-            ..frame
-        };
+        let updated = super::subagent::cancelled_frame(&self.runtime, &frame);
         self.runtime
             .records
             .record_subagent_child(&updated)

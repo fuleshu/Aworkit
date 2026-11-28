@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-11-28 09:37:39",
+    "design_external_id": "aworkit.job_resolution_contract",
+    "id": 59598594263,
+    "sort_order": 0,
+    "target_type": "markdown",
+    "task_id": {
+      "ref": "b73d6eb3-69cf-4c76-85f2-0247c751ec50"
+    }
+  },
+  "deleted": false,
+  "identity": "939e9d95-10da-490f-b79f-ba7bc4d2c22e",
+  "schemaVersion": 1
+}

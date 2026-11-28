@@ -1,0 +1,62 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/comfyui.rs\",\"desktop/src-tauri/src/runtime/comfyui/authoring.rs\",\"desktop/src-tauri/src/runtime/comfyui/tools.rs\",\"desktop/src-tauri/src/runtime/service/workflow_tools.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/comfyui_tool.rs\",\"desktop/src-tauri/src/runtime/tool_loop/comfyui_tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop/image_tools.rs\",\"desktop/user_help/comfyui.md\",\"docs/adashi/design-23c78ba712e23bfd596fa0b2992926df093e7a3c41195bcc7d4edc874d030929.md\"]",
+    "completed_at": "2026-11-28 09:29:04",
+    "completion_memo": {
+      "lines": [
+        "Implemented the four fixes from the task.\n",
+        "\n",
+        "1. Type and choices come from the node schema. `declared_kind` maps the `/object_info` INT/FLOAT/BOOLEAN/STRING/COMBO prefix to the parameter kind and only falls back to the graph value; `declared_input_spec` searches required and optional inputs; `choices_for` reads the current `[\"COMBO\", {\"options\": [...]}]` shape as well as the legacy `[[values], {...}]` shape. Verified against the live server: ResolutionSelector.megapixels is FLOAT (default 1.0) and aspect_ratio is a COMBO with eight options, both now authored correctly (megapixels → number, aspect_ratio → string + enum). Authoring reconciliation therefore no longer narrows a FLOAT input to integer.\n",
+        "\n",
+        "2. Every produced image is returned. `output_images` collects all saved outputs in ComfyUI order (previews only as fallback, duplicates collapsed); each is imported, published and listed in `source.images` with filename, subfolder, kind, byte length and both paths. `image`/`source.outputPath`/`source.storedPath` still name the first. The result attaches up to 8 images and reports `source.attachedCount`, `source.imageCount` and — above 32 stored images — `source.imagesOmitted`, so nothing is dropped silently. `image_tools::result_images` reads the `images` array, so a batch render reaches the model as several attachments.\n",
+        "\n",
+        "3. Configured tools are discoverable. `comfyui_get_workflow` without `workflow` returns every configured workflow tool with id, display name, enabled state, workflow path and parameter bindings; the catalogue is frozen with the Chat (new optional `tools` field on the frozen authoring limit, `serde(default)`), and a binding frozen before this change still answers from its id/path table. The single-workflow graph read is unchanged.\n",
+        "\n",
+        "4. Model-facing clarity. `comfyui_model_description` appends generated runtime facts (workflow file, capability id, return shape, refused undeclared arguments) to the authored text; the freeze warning now separates disabled from no-longer-configured, names the likely rename/removal, states that Settings changes apply to the next Chat and points at the listing helper. user_help/comfyui.md and the design specification were updated to match.\n",
+        "\n",
+        "Verification: `cargo test comfyui` in desktop/src-tauri → 45 passed, 0 failed (includes the stub-server end-to-end test now saving two images and asserting both are stored, published and attached). `cargo test -p aworkit-capability-host comfyui` → 9 passed. The full desktop lib suite is 661 passed / 2 failed; both failures are in files this task did not touch (`runtime::pipeline::tests::subagent_tools` expects a tool list without `tool.job.keep`, and `runtime::service::tool_plugins` history-guard test) and reproduce independently of these changes.\n",
+        "\n",
+        "Follow-up for the user, not code: the existing qwen-image-2-1-text-to-image Settings entry still stores `megapixels` as integer. Re-run \"Auto create\" on that workflow (or set the value kind to Number) to pick up the corrected typing; the batch behaviour is live for any `batch_size` above one."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-11-28 09:20:29",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Evidence: chat.e663e1a69bd6c316dd372696edb10dda50a2f271 (67 model turns, 116 tool calls, ~30 turns spent locating the tool before any work was possible). The Qwen Image 2.1 workflow tool was not callable in that Chat, and the agent had to read Aworkit's Settings document from disk to learn the tool's argument names.\n",
+        "\n",
+        "Fixes (all inside the existing ComfyUI integration component):\n",
+        "\n",
+        "1. Parameter kind and choices come from the node schema, not the graph value.\n",
+        "   - /object_info reports ResolutionSelector.megapixels as FLOAT (default 1.0) while the graph stores 1, so the authoring flow wrote `valueKind: integer`; the schema then declared integer, dispatch refused 2.5 with \"must be an integer\", and the user had to edit Settings.\n",
+        "   - aspect_ratio is a COMBO whose allowed values now ship as [\"COMBO\", {\"options\": [...]}]; choices_for only understood the legacy [[values], {...}] shape, so the schema carried no enum and the model had to guess \"4:3 (Standard)\".\n",
+        "   - Accept: declared INT/FLOAT/BOOLEAN/STRING/COMBO wins over the JSON value, with the value as fallback; both COMBO shapes and optional inputs yield choices.\n",
+        "\n",
+        "2. Every produced image is returned.\n",
+        "   - first_output_image + a single import/publish dropped all but one file, so batch_size > 1 silently threw images away; the design and user help already promise the produced images (plural).\n",
+        "   - Accept: all output images (bounded, with an explicit omitted count) are stored, published, reported in source.images[] and as result attachments; image/source.outputPath stay as the first image for compatibility.\n",
+        "\n",
+        "3. A configured workflow tool is discoverable.\n",
+        "   - comfyui_get_workflow required an id the agent could not discover; there was no way to list configured tools, their parameter schema or their enable state.\n",
+        "   - Accept: omitting `workflow` returns every configured workflow tool with id, name, enabled, workflow path and parameter bindings; the single-workflow read is unchanged.\n",
+        "\n",
+        "4. The model-facing description carries generated runtime facts (workflow file, return shape, refused-argument behaviour), and the freeze warning distinguishes disabled from no-longer-configured and points at the next Chat.\n",
+        "\n",
+        "Out of scope: changing stored Settings of existing tools (re-run Auto create to pick up the correct kinds), and the unrelated job.keep error seen in the same chat."
+      ]
+    },
+    "id": 126563531354,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "ComfyUI workflow tools: correct parameter typing, honour batch output, and make a configured tool discoverable",
+    "updated_at": "2026-11-28 09:29:04"
+  },
+  "deleted": false,
+  "identity": "c1218bc0-8db9-4b80-86ee-fea2f3da3903",
+  "schemaVersion": 1
+}

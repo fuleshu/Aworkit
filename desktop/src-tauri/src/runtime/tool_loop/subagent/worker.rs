@@ -188,6 +188,18 @@ impl ModelToolInvocationPortV1 for SubagentToolPortV1 {
             self.inner.context.delegation.as_ref().map(StableId::as_str),
         );
     }
+    fn provider_limit_notice(&self) -> Option<String> {
+        self.inner.provider_limit_notice()
+    }
+    fn record_provider_limit(&self, provider_text: &str) {
+        // The limit belongs to the account, so the child records it on the same
+        // Chat-scoped registry its parent and siblings read.
+        self.inner.record_provider_limit(provider_text);
+    }
+    fn note_provider_failure(&self, class: &str, provider_text: &str, reaction: &str) {
+        self.inner
+            .note_provider_failure(class, provider_text, reaction);
+    }
     fn legacy_context_identity(&self) -> bool {
         self.inner.legacy_context_identity()
     }
@@ -227,6 +239,11 @@ impl ModelToolInvocationPortV1 for SubagentToolPortV1 {
         output: u64,
         assistant_tokens: u64,
     ) -> Result<(), String> {
+        // Live counters are what a settlement or cancellation reports; they must
+        // describe the work that happened, not the empty frame the child began from.
+        if let Some(job) = &self.job {
+            job.record_usage(input, output);
+        }
         self.inner
             .context_usage(outer, agent, request, input, output, assistant_tokens)
     }
@@ -271,6 +288,9 @@ impl ModelToolInvocationPortV1 for SubagentToolPortV1 {
     fn note_child_turn(&self, turn: u32, assistant_text: &str, calls: &[ModelToolCallV1]) {        let Some(job) = &self.job else {
             return;
         };
+        // The committed step is what a stall report counts. Recording it here
+        // means "still running" always has a last sequence and an age.
+        job.record_turn(turn);
         let tools = calls
             .iter()
             .map(|call| call.name.as_str())

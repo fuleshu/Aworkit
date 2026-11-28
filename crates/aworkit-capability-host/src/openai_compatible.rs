@@ -504,6 +504,15 @@ impl From<OpenAiCompatibleProviderError> for ProviderError {
             OpenAiCompatibleProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             OpenAiCompatibleProviderError::RequestTimedOut => Self::RequestTimedOut,
             OpenAiCompatibleProviderError::Transport => Self::TransportFailed,
+            OpenAiCompatibleProviderError::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            } => Self::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            },
             other => Self::Failed(other.to_string()),
         }
     }
@@ -519,7 +528,15 @@ impl From<BoundedJsonError> for OpenAiCompatibleProviderError {
             BoundedJsonError::ClientConstruction => Self::ClientConstruction,
             BoundedJsonError::RequestTimedOut => Self::RequestTimedOut,
             BoundedJsonError::Transport => Self::Transport,
-            BoundedJsonError::HttpStatus { status, detail } => Self::HttpStatus { status, detail },
+            BoundedJsonError::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            } => Self::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            },
             BoundedJsonError::ResponseTooLarge => Self::ResponseTooLarge,
             BoundedJsonError::InvalidJson => Self::InvalidJson,
         }
@@ -561,7 +578,11 @@ pub enum OpenAiCompatibleProviderError {
     /// The provider's own bounded diagnostic, when it sent one: a refusal that
     /// names the offending field is what makes the next attempt different.
     #[error("provider returned HTTP status {status}{detail}")]
-    HttpStatus { status: u16, detail: String },
+    HttpStatus {
+        status: u16,
+        detail: String,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("provider response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("provider response is not valid JSON")]

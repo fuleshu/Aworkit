@@ -5,11 +5,12 @@
 
 mod approvals;
 mod cancellation;
-mod chat_workspace;
+pub mod chat_workspace;
 pub mod comfyui;
 mod compaction;
 mod concurrency;
 mod context_inspection;
+pub mod crash_report;
 mod credential_journal;
 mod credentials;
 mod digest;
@@ -38,6 +39,7 @@ mod plan_contract;
 mod project_scope;
 mod provider;
 mod provider_health;
+mod provider_limits;
 mod record_cache;
 mod repeat_tool_reminder;
 mod run_events;

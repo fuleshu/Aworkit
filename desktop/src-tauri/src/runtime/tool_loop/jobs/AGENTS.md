@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=7046939090106192 -->
+<!-- adashi:generated revision=2589696469400843 -->
 # Architecture — `desktop/src-tauri/src/runtime/tool_loop/jobs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -11,5 +11,9 @@ Bound here:
 - file `desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs`
 - file `desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs`
 
-[Showing 2 of 2 design element(s) bound here, 15 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+
+Markdown design specifications:
+
+
+- [Job resolution: release, keep and bounded reads](../../../../../../docs/adashi/design-165a49e63474144d90e0148079f44330c0ee21f9d7a05e97a4423a2a7be479e1.md)
 <!-- adashi:architecture:end -->

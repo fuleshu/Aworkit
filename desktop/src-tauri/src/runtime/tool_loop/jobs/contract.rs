@@ -7,7 +7,8 @@ pub const INPUT: &str = "tool.job.input";
 pub const STOP: &str = "tool.job.stop";
 pub const LIST: &str = "tool.job.list";
 pub const KEEP: &str = "tool.job.keep";
-pub const IDS: [&str; 7] = [START, OUTPUT, INPUT, STOP, LIST, KEEP, PYTHON_START];
+pub const RELEASE: &str = "tool.job.release";
+pub const IDS: [&str; 8] = [START, OUTPUT, INPUT, STOP, LIST, KEEP, RELEASE, PYTHON_START];
 pub fn is_job(id: &str) -> bool {
     IDS.contains(&id)
 }
@@ -47,14 +48,18 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
     let (allowed, required): (&[&str], &[&str]) = match operation {
         "shell_start" => (&["command", "interactive"], &["command"]),
         "python_start" => (&["script", "interactive"], &["script"]),
-        "job_output" => (&["jobId", "cursor", "waitMs", "maximumBytes"], &["jobId"]),
+        "job_output" => (
+            &["jobId", "cursor", "waitMs", "maximumBytes", "mode"],
+            &["jobId"],
+        ),
         "job_input" => (&["jobId", "text", "closeStdin"], &["jobId", "text"]),
         "job_stop" => (&["jobId"], &["jobId"]),
         "job_keep" => (&["jobId", "reason"], &["jobId", "reason"]),
+        "job_release" => (&["jobId", "reason", "discardOutput"], &["jobId"]),
         "job_list" => (&[], &[]),
         _ => {
             return Err(invalid_tool(&format!(
-                "unknown job operation '{operation}'; supported operations are shell_start, python_start, job_output, job_input, job_stop, job_keep and job_list"
+                "unknown job operation '{operation}'; supported operations are shell_start, python_start, job_output, job_input, job_stop, job_keep, job_release and job_list"
             )));
         }
     };
@@ -93,12 +98,21 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
             )));
         }
     }
-    for key in ["interactive", "closeStdin"] {
+    for key in ["interactive", "closeStdin", "discardOutput"] {
         if object.get(key).is_some_and(|v| !v.is_boolean()) {
             return Err(invalid_tool(&format!(
                 "{operation} argument '{key}' must be true or false"
             )));
         }
+    }
+    // A read mode selects the window: `read` continues from the cursor, `tail`
+    // returns the end of the captured streams.
+    if let Some(mode) = object.get("mode")
+        && !mode.as_str().is_some_and(|mode| matches!(mode, "read" | "tail"))
+    {
+        return Err(invalid_tool(
+            "job_output argument 'mode' must be \"read\" or \"tail\"",
+        ));
     }
     for (key, min, max) in [("waitMs", 0, 60000), ("maximumBytes", 1, 262144)] {
         if object

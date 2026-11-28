@@ -1030,6 +1030,10 @@ impl WorkflowExecutionPipeline {
             }
             run_events.publish_graph_activity(activity);
         };
+        // A pass that commits nothing for a bounded time is reported as stalled
+        // while it runs, so a hung Run cannot sit open with zero events. Reporting
+        // never ends the pass.
+        let stall_monitor = run_events.start_stall_monitor();
         let pass = execute_graph_pass_observed(
             &compiled,
             &pending.conversation,
@@ -1054,6 +1058,7 @@ impl WorkflowExecutionPipeline {
             Some(&graph_observer),
         );
         self.records.store_stopped_pass(&prepared.request_id, pass.stopped_state.as_ref())?;
+        drop(stall_monitor);
         model_observer.settle(graph_pass_live_status(pass.status));
         run_events
             .ensure_healthy()
@@ -2355,6 +2360,9 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     "worker proposal did not contain a frozen workflow JSON document".to_owned(),
                 )
             })?;
+        // Same liveness report as the direct pass path: a resumed or answered run
+        // that commits nothing is stalled, not silently running.
+        let stall_monitor = run_events.start_stall_monitor();
         let outcome = {
             let conversation: Vec<WorkflowMessageV1> = serde_json::from_value(
                 context
@@ -2453,6 +2461,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 )
             };
             self.records.store_stopped_pass(&self.prepared.request_id, pass.stopped_state.as_ref())?;
+            drop(stall_monitor);
             model_observer.settle(graph_pass_live_status(pass.status));
             run_events
                 .ensure_healthy()

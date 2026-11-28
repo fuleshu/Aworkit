@@ -30,6 +30,14 @@ const SCOPE_EVENT: &str = "context.delegation-scope";
 /// evidence stay operational and are never merged into the semantic transcript,
 /// so this is deliberately a `context.*` fact rather than a timeline activity.
 pub(crate) const CHILD_FACT: &str = "context.subagent-child";
+/// One terminal child status delivered to the delegating Agent.
+///
+/// The delivery marker is committed before dispatch, so a restart re-delivers the
+/// report the model had not seen yet instead of replaying the child.
+const CHILD_REPORT: &str = "context.subagent-report";
+/// How long a live child may produce no event before it is reported as a stall.
+/// A delegated child cannot hold a Run open while its delegator hears nothing.
+pub(super) const SUBAGENT_STALL_SECONDS: u64 = 300;
 /// Role instructions of every child conversation. The child is always isolated
 /// from the parent transcript unless a fork declares a bounded projection.
 const CHILD_ROLE_INSTRUCTIONS: &str = "You are a delegated subagent. The supplied definitions are your exact tools; they do not describe the parent agent's tools. Execute the assigned work using those tools and report observed changes and test results concisely. Your permissions are fixed at delegation. If a required operation needs approval or an unavailable tool, return the specific blocker to the parent promptly; do not retry it through another tool or emit a large ready-to-paste implementation. Background jobs belong to this Chat, but you may control only jobs you started. Resolve them before finishing.";
@@ -685,6 +693,9 @@ impl FileToolDispatcherV1 {
         let frame = apply_turn(prepared.frame, turn);
         self.persist_child(&frame)?;
         publish_child_fact(&self.run_events, &frame, frame.status)?;
+        // This terminal status returns to the model as the tool result itself, so
+        // the pending-report scan must not file it a second time.
+        let _ = mark_child_reported(&self.run_events, &frame, frame.status);
         if let Some(error) = error {
             return Err(error);
         }
@@ -834,6 +845,7 @@ impl FileToolDispatcherV1 {
         let updated = apply_turn(frame, turn);
         self.persist_child(&updated)?;
         publish_child_fact(&self.run_events, &updated, updated.status)?;
+        let _ = mark_child_reported(&self.run_events, &updated, updated.status);
         if let Some(error) = error {
             return Err(error);
         }
@@ -1127,6 +1139,269 @@ fn child_messages(assignment: String, shell_context: &str, guidance: &str) -> Va
     json!({"messages": messages})
 }
 
+/// Files one terminal child status with the delegating Agent.
+///
+/// A delegation is a tool call, so its outcome is a tool result: every terminal
+/// child status - completed, failed, cancelled, or interrupted by a restart - is
+/// delivered once as a bounded report. The delivery marker is committed first, so
+/// a restart re-delivers the report instead of replaying the child. A live child
+/// that stopped producing events is reported as a stall with its last committed
+/// sequence and the age of that sequence, so silence is never read as progress.
+impl BoundFileToolAuthorityV1 {
+    pub(super) fn pending_child_reports(&self) -> Result<Option<String>, String> {
+        let frames = self
+            .runtime
+            .records
+            .subagent_children(&self.context.run_id)
+            .map_err(|error| error.to_string())?;
+        let delivered = reported_child_keys(&self.run_events)?;
+        let plan = plan_child_reports(
+            frames
+                .iter()
+                .filter(|frame| frame.chat_id == self.context.chat_id),
+            &delivered,
+            |frame| {
+                (
+                    effective_status(frame, &self.runtime.jobs, &self.context.chat_id),
+                    self.runtime
+                        .jobs
+                        .child_live(&self.context.chat_id, &frame.child_id),
+                )
+            },
+        );
+        if plan.is_empty() {
+            return Ok(None);
+        }
+        // Durable before dispatch: a restart re-delivers this report rather than
+        // replaying the child or losing its outcome.
+        for (key, child_id) in plan.markers {
+            self.run_events.context_event(
+                CHILD_REPORT,
+                json!({
+                    "key": key,
+                    "childId": child_id,
+                    "chatId": self.context.chat_id,
+                }),
+            )?;
+        }
+        Ok(Some(render_child_reports(&plan.settled, &plan.stalled)))
+    }
+
+    /// The pass that owns these children is terminating: cancel every live child
+    /// it created and commit its terminal status in the same pass. Best effort by
+    /// design - the durable frame is what a restart reads.
+    pub(super) fn cancel_live_children(&self) {
+        let Ok(frames) = self.runtime.records.subagent_children(&self.context.run_id) else {
+            return;
+        };
+        let node = self.context.node_id.as_str();
+        for frame in frames.iter().filter(|frame| {
+            frame.chat_id == self.context.chat_id
+                && frame.node_id == node
+                && effective_status(frame, &self.runtime.jobs, &self.context.chat_id)
+                    == ChildStatusV1::Running
+        }) {
+            self.runtime
+                .jobs
+                .stop_unkept_scoped(&self.context.chat_id, Some(&frame.child_id));
+            let updated = cancelled_frame(&self.runtime, frame);
+            let _ = self
+                .runtime
+                .records
+                .record_subagent_child(&updated);
+            let _ = publish_child_fact(&self.run_events, &updated, ChildStatusV1::Cancelled);
+        }
+    }
+}
+
+/// Delivery keys already committed for this Run's children.
+fn reported_child_keys(
+    run_events: &RunEventStream,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let events = run_events.context_events_shared()?;
+    Ok(events
+        .iter()
+        .filter(|event| event.kind == CHILD_REPORT)
+        .filter_map(|event| event.payload["key"].as_str().map(str::to_owned))
+        .collect())
+}
+
+fn child_report_key(child_id: &str, sequence: u64, status: &str) -> String {
+    format!("{child_id}:{sequence}:{status}")
+}
+
+/// The child statuses this pass still has to tell its delegating Agent about.
+#[derive(Default)]
+pub(super) struct ChildReportPlanV1 {
+    pub settled: Vec<String>,
+    pub stalled: Vec<String>,
+    /// Delivery keys committed before dispatch, with the child they belong to.
+    pub markers: Vec<(String, String)>,
+}
+
+impl ChildReportPlanV1 {
+    pub(super) fn is_empty(&self) -> bool {
+        self.settled.is_empty() && self.stalled.is_empty()
+    }
+}
+
+/// Decide which child statuses are due, from durable frames, live counters and
+/// the keys already delivered.
+///
+/// A terminal frame is reported once per revision and status, so re-entering the
+/// loop does not repeat a status the model already saw, while a resumed child
+/// (a new revision) reports again. A live child whose last committed sequence is
+/// older than [`SUBAGENT_STALL_SECONDS`] is a stall, reported once per sequence.
+pub(super) fn plan_child_reports<'a>(
+    frames: impl Iterator<Item = &'a SubagentChildFrameV1>,
+    delivered: &std::collections::BTreeSet<String>,
+    observe: impl Fn(&SubagentChildFrameV1) -> (ChildStatusV1, Option<jobs::ChildLiveV1>),
+) -> ChildReportPlanV1 {
+    let mut plan = ChildReportPlanV1::default();
+    for frame in frames {
+        let (status, live) = observe(frame);
+        if status == ChildStatusV1::Running {
+            let Some(live) = live else {
+                continue;
+            };
+            let sequence = frame.head_revision.max(live.last_sequence);
+            let key = child_report_key(&frame.child_id, sequence, "stall");
+            if live.age_seconds >= SUBAGENT_STALL_SECONDS && !delivered.contains(&key) {
+                plan.stalled.push(stall_line(frame, sequence, live.age_seconds));
+                plan.markers.push((key, frame.child_id.clone()));
+            }
+            continue;
+        }
+        let key = child_report_key(&frame.child_id, frame.head_revision, status.as_str());
+        if delivered.contains(&key) {
+            continue;
+        }
+        plan.settled.push(settlement_line(frame, status));
+        plan.markers.push((key, frame.child_id.clone()));
+    }
+    plan
+}
+
+/// The frame a cancelling parent commits: the real counters the child reported,
+/// never the zeros of the frame it started from.
+pub(super) fn cancelled_frame(
+    runtime: &FileToolAuthorityRuntimeV1,
+    frame: &SubagentChildFrameV1,
+) -> SubagentChildFrameV1 {
+    let live = runtime.jobs.child_live(&frame.chat_id, &frame.child_id);
+    SubagentChildFrameV1 {
+        head_revision: frame.head_revision.saturating_add(1),
+        status: ChildStatusV1::Cancelled,
+        final_text: if frame.final_text.trim().is_empty() {
+            "Subagent cancelled by its parent before it settled.".to_owned()
+        } else {
+            frame.final_text.clone()
+        },
+        model_turns: frame.model_turns.max(live.map_or(0, |live| live.model_turns)),
+        input_tokens: frame
+            .input_tokens
+            .max(live.map_or(0, |live| live.input_tokens)),
+        output_tokens: frame
+            .output_tokens
+            .max(live.map_or(0, |live| live.output_tokens)),
+        updated_at: crate::runtime::history::now_label(),
+        ..frame.clone()
+    }
+}
+
+/// One settled child, as the delegating model reads it: identity, status, the
+/// work it really did, and the outcome text that decides what happens next.
+fn settlement_line(frame: &SubagentChildFrameV1, status: ChildStatusV1) -> String {
+    let outcome = bounded_excerpt(&frame.final_text, 240);
+    let outcome = if outcome.is_empty() {
+        String::new()
+    } else {
+        format!(" Outcome: {outcome}")
+    };
+    format!(
+        "child {} {}{} ({} model turn(s), {} tool call(s), {} input / {} output tokens).{}",
+        frame.child_id,
+        status.as_str(),
+        if frame.kind == ChildKindV1::Fork {
+            " [fork]"
+        } else if frame.kind == ChildKindV1::External {
+            " [external]"
+        } else {
+            ""
+        },
+        frame.model_turns,
+        frame.tool_calls,
+        frame.input_tokens,
+        frame.output_tokens,
+        outcome
+    )
+}
+
+fn stall_line(frame: &SubagentChildFrameV1, sequence: u64, age_seconds: u64) -> String {
+    format!(
+        "child {} is stalled: its last committed sequence is {}, {}s ago, and it has \
+         produced no event since. Call list_subagents to inspect it, message it to steer \
+         it, or cancel it.",
+        frame.child_id, sequence, age_seconds
+    )
+}
+
+/// Byte budget for one delegation report. The dispatch bound covers the whole
+/// notice, so the report is summarised rather than transcribed.
+const MAXIMUM_CHILD_REPORT_BYTES: usize = 2048;
+
+/// Render one bounded delegation report. Pure so the bound is testable without a
+/// child process: a report of any size states how much it omitted.
+pub(super) fn render_child_reports(settled: &[String], stalled: &[String]) -> String {
+    let mut lines: Vec<&str> = settled.iter().map(String::as_str).collect();
+    lines.extend(stalled.iter().map(String::as_str));
+    let mut listed = Vec::new();
+    let mut used = 0usize;
+    let mut omitted = 0usize;
+    for (index, line) in lines.iter().enumerate() {
+        let separator = if index == 0 { 0 } else { 2 };
+        if used.saturating_add(separator).saturating_add(line.len()) > MAXIMUM_CHILD_REPORT_BYTES {
+            omitted = lines.len().saturating_sub(index);
+            break;
+        }
+        used = used.saturating_add(separator).saturating_add(line.len());
+        listed.push(*line);
+    }
+    let mut report = if stalled.is_empty() {
+        format!(
+            "{} delegated child/children settled. {}",
+            settled.len(),
+            listed.join("; ")
+        )
+    } else {
+        format!(
+            "{} settled, {} stalled. {}",
+            settled.len(),
+            stalled.len(),
+            listed.join("; ")
+        )
+    };
+    if omitted > 0 {
+        report.push_str(&format!(
+            " {omitted} further child report(s) are not listed; call list_subagents to see them all."
+        ));
+    }
+    report
+}
+
+/// One bounded single-line excerpt for a report.
+fn bounded_excerpt(text: &str, maximum: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.len() <= maximum {
+        return collapsed;
+    }
+    let mut end = maximum;
+    while !collapsed.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &collapsed[..end])
+}
+
 /// Applies one settled child turn-set to a frame, advancing its revision.
 fn apply_turn(mut frame: SubagentChildFrameV1, turn: ChildTurnV1) -> SubagentChildFrameV1 {
     frame.head_revision = frame.head_revision.saturating_add(1);
@@ -1177,6 +1452,25 @@ pub(crate) fn publish_child_fact(
 ) -> Result<(), String> {
     run_events
         .context_event(CHILD_FACT, child_fact(frame, status))
+        .map(|_| ())
+}
+
+/// Record that the delegating Agent already received this child's terminal status
+/// as a direct tool result, so it is not reported to it a second time.
+pub(super) fn mark_child_reported(
+    run_events: &RunEventStream,
+    frame: &SubagentChildFrameV1,
+    status: ChildStatusV1,
+) -> Result<(), String> {
+    run_events
+        .context_event(
+            CHILD_REPORT,
+            json!({
+                "key": child_report_key(&frame.child_id, frame.head_revision, status.as_str()),
+                "childId": frame.child_id,
+                "chatId": frame.chat_id,
+            }),
+        )
         .map(|_| ())
 }
 
@@ -1236,5 +1530,206 @@ impl FileToolAuthorityRuntimeV1 {
                 .then_with(|| left.child_id.cmp(&right.child_id))
         });
         Ok(catalog)
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    #[test]
+    fn a_settled_report_names_the_child_its_status_and_its_real_work() {
+        let report = render_child_reports(
+            &[settlement_line(
+                &frame("child.abc", ChildKindV1::Fresh, "", 7, 3, 200, 40),
+                ChildStatusV1::Failed,
+            )],
+            &[],
+        );
+        assert!(report.contains("child.abc"));
+        assert!(report.contains("failed"));
+        assert!(report.contains("7 model turn(s)"));
+        assert!(report.contains("200 input / 40 output tokens"));
+        assert!(report.contains("1 delegated child/children settled"));
+    }
+
+    #[test]
+    fn a_stall_names_the_last_sequence_and_its_age() {
+        let report = render_child_reports(
+            &[],
+            &[stall_line(
+                &frame("child.stuck", ChildKindV1::Fresh, "", 4, 0, 0, 0),
+                11,
+                900,
+            )],
+        );
+        assert!(report.contains("child.stuck is stalled"));
+        assert!(
+            report.contains("last committed sequence is 11"),
+            "the sequence is what a reader resumes from: {report}"
+        );
+        assert!(report.contains("900s ago"), "the age is stated: {report}");
+    }
+
+    #[test]
+    fn a_report_of_any_size_states_what_it_omitted() {
+        // Hundreds of settled children must not grow the notice with the job
+        // count: it is a report, not a transcription.
+        let settled = (0..400)
+            .map(|index| {
+                settlement_line(
+                    &frame(&format!("child.{index}"), ChildKindV1::Fresh, "", 1, 0, 0, 0),
+                    ChildStatusV1::Completed,
+                )
+            })
+            .collect::<Vec<_>>();
+        let report = render_child_reports(&settled, &[]);
+        assert!(
+            report.len() < MAXIMUM_CHILD_REPORT_BYTES + 512,
+            "the inventory is capped: {} bytes",
+            report.len()
+        );
+        assert!(
+            report.contains("further child report(s) are not listed"),
+            "the omission is explicit: {report}"
+        );
+        assert!(report.contains("400 delegated child/children settled"));
+    }
+
+    #[test]
+    fn each_terminal_child_is_reported_once_and_a_resumed_child_reports_again() {
+        let mut failed = frame("child.failed", ChildKindV1::Fresh, "provider refused", 2, 0, 0, 0);
+        failed.status = ChildStatusV1::Failed;
+        let delivered = std::collections::BTreeSet::new();
+        let plan = plan_child_reports([&failed].into_iter(), &delivered, |_| {
+            (ChildStatusV1::Failed, None)
+        });
+        assert_eq!(plan.settled.len(), 1);
+        assert_eq!(plan.markers.len(), 1, "the delivery is recorded once");
+
+        // The next turn finds that key already delivered and says nothing again.
+        let delivered: std::collections::BTreeSet<String> =
+            plan.markers.iter().map(|(key, _)| key.clone()).collect();
+        let repeat = plan_child_reports([&failed].into_iter(), &delivered, |_| {
+            (ChildStatusV1::Failed, None)
+        });
+        assert!(repeat.is_empty(), "a delivered status is not repeated");
+
+        // A continuation advances the revision, so its new outcome is reported.
+        let mut resumed = failed.clone();
+        resumed.head_revision = failed.head_revision + 1;
+        resumed.status = ChildStatusV1::Completed;
+        let after = plan_child_reports([&resumed].into_iter(), &delivered, |_| {
+            (ChildStatusV1::Completed, None)
+        });
+        assert_eq!(after.settled.len(), 1);
+        assert!(after.settled[0].contains("completed"));
+    }
+
+    #[test]
+    fn a_live_child_that_stopped_producing_events_is_reported_as_a_stall() {
+        let running = frame("child.quiet", ChildKindV1::Fresh, "", 3, 0, 0, 0);
+        let live = crate::runtime::tool_loop::jobs::ChildLiveV1 {
+            running: true,
+            last_sequence: 9,
+            age_seconds: SUBAGENT_STALL_SECONDS + 60,
+            model_turns: 3,
+            input_tokens: 0,
+            output_tokens: 0,
+        };
+        let plan = plan_child_reports(
+            [&running].into_iter(),
+            &std::collections::BTreeSet::new(),
+            |_| (ChildStatusV1::Running, Some(live)),
+        );
+        assert_eq!(plan.settled.len(), 0);
+        assert_eq!(plan.stalled.len(), 1);
+        assert!(plan.stalled[0].contains("child.quiet"));
+        assert!(
+            plan.stalled[0].contains("last committed sequence is 9"),
+            "the report names the sequence, not just the child: {}",
+            plan.stalled[0]
+        );
+
+        // A child that is merely working is not a stall.
+        let working = crate::runtime::tool_loop::jobs::ChildLiveV1 {
+            age_seconds: 5,
+            ..live
+        };
+        let quiet = plan_child_reports(
+            [&running].into_iter(),
+            &std::collections::BTreeSet::new(),
+            |_| (ChildStatusV1::Running, Some(working)),
+        );
+        assert!(quiet.is_empty(), "progress is not silence");
+    }
+
+    #[test]
+    fn a_restart_interrupted_child_is_reported_as_a_terminal_status() {
+        let running = frame("child.interrupted", ChildKindV1::Fresh, "", 1, 0, 0, 0);
+        let plan = plan_child_reports(
+            [&running].into_iter(),
+            &std::collections::BTreeSet::new(),
+            |_| (ChildStatusV1::Interrupted, None),
+        );
+        assert_eq!(plan.settled.len(), 1);
+        assert!(
+            plan.settled[0].contains("interrupted"),
+            "an interrupted child is a terminal status, not a phantom runner: {}",
+            plan.settled[0]
+        );
+    }
+
+    #[test]
+    fn a_long_outcome_is_bounded_to_one_excerpt() {
+        let long = "x".repeat(10_000);
+        let excerpt = bounded_excerpt(&long, 240);
+        assert!(
+            excerpt.len() <= 240 + '…'.len_utf8(),
+            "one bounded excerpt: {} bytes",
+            excerpt.len()
+        );
+        assert!(excerpt.ends_with('…'));
+    }
+
+    fn frame(
+        child_id: &str,
+        kind: ChildKindV1,
+        final_text: &str,
+        model_turns: u32,
+        tool_calls: u32,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> SubagentChildFrameV1 {
+        SubagentChildFrameV1 {
+            child_id: child_id.to_owned(),
+            chat_id: "chat".into(),
+            run_id: "run".into(),
+            node_id: "node".into(),
+            parent_invocation_id: "invoke".into(),
+            parent_call_id: "call".into(),
+            parent_child_id: None,
+            depth: 1,
+            kind,
+            projection_hash: None,
+            projection_items: 0,
+            projection_dropped: 0,
+            inherited_tool_ids: Vec::new(),
+            read_only: false,
+            head_revision: 1,
+            status: ChildStatusV1::Running,
+            task: "task".into(),
+            context_text: String::new(),
+            input: serde_json::Value::Null,
+            exchanges: Vec::new(),
+            final_text: final_text.to_owned(),
+            blocked_actions: Vec::new(),
+            model_turns,
+            tool_calls,
+            input_tokens,
+            output_tokens,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        }
     }
 }

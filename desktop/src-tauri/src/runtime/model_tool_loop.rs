@@ -7,6 +7,7 @@
 //! inside subagents; they impose no cumulative run limit.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCacheTotalsV1,
@@ -28,8 +29,10 @@ use super::{
 mod approval_turn;
 pub(crate) mod empty_turn;
 mod job_completion;
+mod provider_failure;
 mod provider_recovery;
 
+pub(crate) use provider_failure::{ProviderFailureClassV1, ProviderReactionV1};
 pub(crate) use provider_recovery::provider_recovery_notice;
 
 // Headroom for context compaction, not a limit on persisted exchanges.
@@ -60,20 +63,64 @@ pub(crate) const MAXIMUM_IDENTICAL_PROVIDER_FAILURES: u32 = 10;
 /// The provider-failure report ledger for one Agent invocation.
 ///
 /// Every failure produces a model-visible notice, whether or not it repeats. A
-/// failure that repeats *identically* still produces one: the notice says the
+/// failure that repeats *as a class* still produces one: the notice says the
 /// request has not changed, which is the fact the model needs to decide to do
-/// something different.
-#[derive(Default)]
+/// something different. The class, not a byte-identical payload, is what the
+/// repeated-refusal guard counts - a notice or a turn counter that changes with
+/// every retry must not make a spin look like progress.
 struct ProviderRecoveryBudget {
     reports: u32,
     reported: std::collections::BTreeSet<String>,
-    /// The last failure text, and how many times it has repeated in a row.
-    last_failure: Option<String>,
-    identical_failures: u32,
+    /// The class of the last provider answer, and how often it has repeated
+    /// consecutively with no accepted turn in between.
+    last_class: Option<ProviderFailureClassV1>,
+    class_streak: u32,
+    /// Bounded waits already spent on rate limits.
+    waits_used: u32,
     malformed_call_reason: Option<&'static str>,
     /// Once a correction also yields a malformed call, ask for a final text
     /// response with the settled history still available.
     tools_withheld_reason: Option<&'static str>,
+    /// How this loop waits. Production sleeps; a regression test injects a
+    /// no-op so bounded backoff is proven without a clock-based wait.
+    sleeper: fn(Duration),
+}
+
+/// How many rate-limit waits one pass may spend before the provider's own text
+/// ends it. Backoff bounds dispatches, never the Agent's work.
+const MAXIMUM_RATE_LIMIT_WAITS: u32 = 4;
+
+#[cfg_attr(test, allow(dead_code))]
+fn real_backoff_sleep(duration: Duration) {
+    std::thread::sleep(duration);
+}
+
+/// The wait a loop uses when nothing injects one. A unit test never waits on the
+/// clock: bounded backoff is a dispatch delay, and its effect is asserted through
+/// the recorded reaction instead of through elapsed time.
+#[cfg(not(test))]
+fn default_sleeper() -> fn(Duration) {
+    real_backoff_sleep
+}
+
+#[cfg(test)]
+fn default_sleeper() -> fn(Duration) {
+    |_| {}
+}
+
+impl Default for ProviderRecoveryBudget {
+    fn default() -> Self {
+        Self {
+            reports: 0,
+            reported: std::collections::BTreeSet::new(),
+            last_class: None,
+            class_streak: 0,
+            waits_used: 0,
+            malformed_call_reason: None,
+            tools_withheld_reason: None,
+            sleeper: default_sleeper(),
+        }
+    }
 }
 
 impl ProviderRecoveryBudget {
@@ -86,13 +133,6 @@ impl ProviderRecoveryBudget {
         provider_request: &mut ModelToolRequestV1,
     ) -> String {
         self.reports = self.reports.saturating_add(1);
-        let text = error.to_string();
-        if self.last_failure.as_deref() == Some(text.as_str()) {
-            self.identical_failures = self.identical_failures.saturating_add(1);
-        } else {
-            self.last_failure = Some(text);
-            self.identical_failures = 1;
-        }
         // The ledger exists only to tell a repeat from a new condition. It is
         // bounded so a long run cannot grow it without limit; forgetting an old
         // key costs one extra full notice, never a stop.
@@ -119,17 +159,42 @@ impl ProviderRecoveryBudget {
         bounded
     }
 
-    /// A turn the provider accepted clears the identical-failure streak.
+    /// Record one provider answer's class and advance the class streak.
+    fn observe(&mut self, error: &ProviderError) -> ProviderFailureClassV1 {
+        let class = provider_failure::classify_provider_failure(error)
+            .unwrap_or(ProviderFailureClassV1::Refusal);
+        if self.last_class == Some(class) {
+            self.class_streak = self.class_streak.saturating_add(1);
+        } else {
+            self.last_class = Some(class);
+            self.class_streak = 1;
+        }
+        class
+    }
+
+    /// Wait before re-dispatching, bounded and cancellable in spirit: the wait is
+    /// a dispatch delay, never a limit on the Agent's work.
+    fn pause(&self, duration: Duration) {
+        (self.sleeper)(duration);
+    }
+
+    /// A turn the provider accepted clears both the identical-failure streak and
+    /// the class streak, and re-arms the rate-limit wait budget.
     fn progressed(&mut self) {
-        self.last_failure = None;
-        self.identical_failures = 0;
+        self.last_class = None;
+        self.class_streak = 0;
+        self.waits_used = 0;
         self.malformed_call_reason = None;
     }
 
-    /// Whether the provider has refused this exact failure too many times in a
-    /// row for another identical dispatch to be worth making.
+    /// Whether a class has repeated too many times in a row for another dispatch
+    /// of the same kind to be worth making.
     fn stalled(&self) -> bool {
-        self.identical_failures >= MAXIMUM_IDENTICAL_PROVIDER_FAILURES
+        self.class_streak >= MAXIMUM_IDENTICAL_PROVIDER_FAILURES
+    }
+
+    fn waits_exhausted(&self) -> bool {
+        self.waits_used >= MAXIMUM_RATE_LIMIT_WAITS
     }
 }
 pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
@@ -202,6 +267,21 @@ pub(crate) trait ModelToolInvocationPortV1 {
     /// Runtime facts; implementations must not accept model claims as job settlement.
     fn outstanding_jobs(&self) -> Result<Option<String>, String> { Ok(None) }
     fn stop_unkept_jobs(&self) {}
+    /// Terminal delegated-child statuses the delegating Agent has not been told
+    /// yet. The report is produced once and committed before dispatch, so a
+    /// restart re-delivers it instead of replaying the child.
+    fn pending_delegation_reports(&self) -> Result<Option<String>, String> { Ok(None) }
+    /// A spend or quota limit another pass or child already observed for this
+    /// Chat's provider. It belongs to the account, so nothing may dispatch into it.
+    fn provider_limit_notice(&self) -> Option<String> { None }
+    /// Record the first account-scoped limit so every sibling dispatch stops too.
+    fn record_provider_limit(&self, _text: &str) {}
+    /// Record one classified provider answer on the attempt: class, the
+    /// provider's bounded text and the reaction the harness took.
+    fn note_provider_failure(&self, _class: &str, _provider_text: &str, _reaction: &str) {}
+    /// The Agent node is terminating for any reason. Live children are cancelled
+    /// and their terminal statuses committed in the same pass.
+    fn close_pass(&self) {}
     fn legacy_context_identity(&self) -> bool {
         true
     }
@@ -501,7 +581,24 @@ pub(crate) struct ModelToolLoopFailureV1 {
 /// assistant message or a real authority, context, or token error is reached.
 /// There is deliberately no elapsed-time, model-turn, or aggregate tool-call
 /// cap. Provider requests and individual tools retain their own timeouts.
+/// One Agent invocation's tool loop.
+///
+/// The pass owns its delegated children: whatever ends the node - a final answer,
+/// a terminal provider answer, cancellation or an authority denial - the live
+/// children are cancelled and their terminal statuses committed before control
+/// returns, so no span outlives the pass that owns it.
 pub(crate) fn execute_model_tool_loop_v1(
+    gateway: &FrozenModelGateway,
+    request: ModelToolLoopRequestV1<'_>,
+    authority: &dyn ModelToolInvocationPortV1,
+    cancellation: &CancellationToken,
+) -> Result<ModelToolLoopOutcomeV1, ModelToolLoopFailureV1> {
+    let outcome = run_model_tool_loop_v1(gateway, request, authority, cancellation);
+    authority.close_pass();
+    outcome
+}
+
+fn run_model_tool_loop_v1(
     gateway: &FrozenModelGateway,
     request: ModelToolLoopRequestV1<'_>,
     authority: &dyn ModelToolInvocationPortV1,
@@ -789,6 +886,32 @@ fn execute_tool_turn_with_timeout_recovery(
     if let Some(reason) = recovery.tools_withheld_reason {
         append_runtime_notices(&mut retry_notice, vec![malformed_call_final_notice(reason)]);
     }
+    // A delegated child's terminal status is a tool result the delegating model
+    // has not seen yet. The report was committed as an event when it was
+    // produced, so a restart re-delivers it instead of replaying the child.
+    match authority.pending_delegation_reports() {
+        Ok(Some(reports)) => append_runtime_notices(
+            &mut retry_notice,
+            vec![format!("Aworkit delegation notice: {reports}")],
+        ),
+        Ok(None) => {}
+        Err(error) => append_runtime_notices(
+            &mut retry_notice,
+            vec![format!(
+                "Aworkit delegation notice: the delegated-child report could not be read \
+                 ({error}). Call list_subagents if it matters."
+            )],
+        ),
+    }
+    // A spend or quota limit is a fact about the account. Once any pass or child
+    // observed it, nothing in this Chat may dispatch into the same wall again.
+    if let Some(limit) = authority.provider_limit_notice() {
+        return Err(ProviderError::Failed(format!(
+            "{limit}\n\n{}",
+            ProviderFailureClassV1::SpendOrQuotaLimit.remedy()
+        ))
+        .into());
+    }
     let mut provider_request = ModelToolRequestV1 {
         context_messages: request
             .initial_context
@@ -867,6 +990,11 @@ fn execute_tool_turn_with_timeout_recovery(
             Err(error) if is_context_overflow(&error)
                 && overflow_retries < preparation.max_overflow_retries =>
             {
+                authority.note_provider_failure(
+                    ProviderFailureClassV1::ContextTooLarge.as_str(),
+                    &provider_failure::provider_failure_text(&error),
+                    ProviderReactionV1::CompactAndRetry.as_str(),
+                );
                 let reduction = match authority.manage_model_context(
                     gateway,
                     plan,
@@ -920,22 +1048,86 @@ fn execute_tool_turn_with_timeout_recovery(
                 }
             }
             Err(error) if provider_recovery_notice(&error).is_some() => {
-                // Every provider failure that is not cancellation becomes the
-                // model's next turn: the exact failure is reported on the same
-                // frozen route and the Agent decides what to do about it.
-                if report_provider_failure(recovery, &error, &mut provider_request) {
+                // A provider failure is classified before anything is
+                // re-dispatched, and the class decides the reaction.
+                let class = recovery.observe(&error);
+                let provider_text = provider_failure::provider_failure_text(&error);
+                if class.ends_pass_on_first_observation() {
+                    let reaction = if class == ProviderFailureClassV1::SpendOrQuotaLimit {
+                        authority.record_provider_limit(&provider_text);
+                        ProviderReactionV1::StopAccountLimit
+                    } else {
+                        ProviderReactionV1::StopConfiguration
+                    };
+                    authority.note_provider_failure(class.as_str(), &provider_text, reaction.as_str());
+                    return Err(ProviderError::Failed(format!(
+                        "{provider_text}\n\n{}",
+                        class.remedy()
+                    ))
+                    .into());
+                }
+                if class == ProviderFailureClassV1::RateLimit {
+                    if recovery.waits_exhausted() {
+                        authority.note_provider_failure(
+                            class.as_str(),
+                            &provider_text,
+                            ProviderReactionV1::StopWaitBudgetSpent.as_str(),
+                        );
+                        return Err(ProviderError::Failed(format!(
+                            "{provider_text}\n\nThe provider kept throttling after {} bounded \
+                             wait(s), so no turn reached the model.",
+                            recovery.waits_used
+                        ))
+                        .into());
+                    }
+                    let wait = provider_failure::backoff_for(
+                        class,
+                        recovery.waits_used,
+                        provider_failure::retry_after_seconds(&error),
+                    );
+                    recovery.waits_used = recovery.waits_used.saturating_add(1);
+                    recovery.note(&error, &mut provider_request);
+                    bound_request_notices(&mut provider_request);
+                    authority.note_provider_failure(
+                        class.as_str(),
+                        &provider_text,
+                        ProviderReactionV1::WaitThenRetry {
+                            seconds: wait.as_secs(),
+                        }
+                        .as_str(),
+                    );
+                    recovery.pause(wait);
+                    if cancellation.is_cancelled() {
+                        return Err(ProviderError::Cancelled.into());
+                    }
                     continue;
                 }
-                // The provider has refused this exact failure repeatedly with no
-                // successful turn in between, so the same bytes will get the same
-                // answer: another dispatch is provably useless, and because no
-                // request reaches the model there is no Agent decision left to
-                // make. End the pass with a reason the user can act on, instead of
-                // spinning.
+                // Every other class becomes the model's next turn: the exact
+                // failure is reported on the same frozen route and the Agent
+                // decides what to do about it.
+                if report_provider_failure(recovery, &error, &mut provider_request) {
+                    authority.note_provider_failure(
+                        class.as_str(),
+                        &provider_text,
+                        ProviderReactionV1::ReportAndContinue.as_str(),
+                    );
+                    continue;
+                }
+                // The same class has repeated with no accepted turn in between,
+                // so the same answer is expected: another dispatch is provably
+                // useless, and because no request reaches the model there is no
+                // Agent decision left to make. End the pass with a reason the
+                // user can act on, instead of spinning.
+                authority.note_provider_failure(
+                    class.as_str(),
+                    &provider_text,
+                    ProviderReactionV1::StopWaitBudgetSpent.as_str(),
+                );
                 return Err(ProviderError::Failed(format!(
-                    "{error}. The provider refused this exact request {} times in a row, so no turn \
-                     reached the model.",
-                    recovery.identical_failures
+                    "{provider_text}\n\nThis {} condition repeated {} times in a row with no \
+                     accepted turn, so no turn reached the model.",
+                    class.as_str(),
+                    recovery.class_streak
                 ))
                 .into());
             }
@@ -1050,6 +1242,28 @@ fn tool_failure_notice(call: &ModelToolCallV1, error: &str) -> String {
 /// Runs the frozen model/tool loop with approval awareness. A PerInvocation
 /// tool binding suspends the loop with a durable prefix instead of failing.
 pub(crate) fn execute_model_tool_loop_approval_v1(
+    gateway: &FrozenModelGateway,
+    request: ModelToolLoopRequestV1<'_>,
+    authority: &dyn ModelToolInvocationPortV1,
+    cancellation: &CancellationToken,
+) -> Result<ModelToolLoopRunV1, ModelToolLoopFailureV1> {
+    let outcome = run_model_tool_loop_approval_v1(gateway, request, authority, cancellation);
+    close_pass_if_terminal(authority, &outcome);
+    outcome
+}
+
+/// A suspended pass still owns its children; every other outcome ends the pass,
+/// so its live children are cancelled and their statuses committed in it.
+fn close_pass_if_terminal(
+    authority: &dyn ModelToolInvocationPortV1,
+    outcome: &Result<ModelToolLoopRunV1, ModelToolLoopFailureV1>,
+) {
+    if !matches!(outcome, Ok(ModelToolLoopRunV1::Suspended { .. })) {
+        authority.close_pass();
+    }
+}
+
+fn run_model_tool_loop_approval_v1(
     gateway: &FrozenModelGateway,
     request: ModelToolLoopRequestV1<'_>,
     authority: &dyn ModelToolInvocationPortV1,
@@ -1252,6 +1466,29 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
 /// the committed decision, its exchange is durably recorded, and the loop
 /// continues from the following turn.
 pub(crate) fn resume_model_tool_loop_v1(
+    gateway: &FrozenModelGateway,
+    request: ModelToolLoopRequestV1<'_>,
+    authority: &dyn ModelToolInvocationPortV1,
+    pending: &ModelToolLoopPendingV1,
+    approved: bool,
+    now_epoch_millis: u64,
+    cancellation: &CancellationToken,
+) -> Result<ModelToolLoopRunV1, ModelToolLoopFailureV1> {
+    let outcome = run_model_tool_loop_resume_v1(
+        gateway,
+        request,
+        authority,
+        pending,
+        approved,
+        now_epoch_millis,
+        cancellation,
+    );
+    close_pass_if_terminal(authority, &outcome);
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_model_tool_loop_resume_v1(
     gateway: &FrozenModelGateway,
     request: ModelToolLoopRequestV1<'_>,
     authority: &dyn ModelToolInvocationPortV1,

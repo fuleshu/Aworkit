@@ -2006,8 +2006,8 @@
     {
       "id": "tool.job.output",
       "name": "Read job output",
-      "description": "Read new output and status from a Chat-owned job, optionally waiting up to 60 seconds.",
-      "instructions": "For normal polling, pass the exact jobId and optionally waitMs. Omit cursor to continue from the last acknowledged read. To reread output, use a cursor previously returned for this job. A soft wait leaves the job running. Read again when moreOutput is true.",
+      "description": "Read new output and status from a Chat-owned job, optionally waiting up to 60 seconds. Reports the captured byte totals and how much remains.",
+      "instructions": "For normal polling, pass the exact jobId and optionally waitMs. Omit cursor to continue from the last acknowledged read. To reread output, use a cursor previously returned for this job. A soft wait leaves the job running. Read again when moreOutput is true. mode=tail returns the last maximumBytes of the captured streams instead, with the omitted byte count, which is the cheap way to see how a long job ended. A finished job whose output you do not need can be resolved with job_release.",
       "executor": "job.output",
       "requiresProject": false,
       "execution": "native",
@@ -2053,6 +2053,14 @@
             "minimum": 1,
             "maximum": 262144,
             "description": "Maximum returned bytes; default 65536."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "read",
+              "tail"
+            ],
+            "description": "read continues from the cursor (default); tail returns the last maximumBytes of the captured streams, split evenly between stdout and stderr, and advances the cursor to the end."
           }
         },
         "required": [
@@ -2146,8 +2154,8 @@
     {
       "id": "tool.job.keep",
       "name": "Keep job running",
-      "description": "Explicitly retain a running service after this response, subject to the approval policy.",
-      "instructions": "Only use when leaving the process running is intended. Give a concrete reason and report the retained job ID to the user. Retention lasts until stopped or Aworkit exits; it does not detach a process from supervision.",
+      "description": "Explicitly retain a running service after this response, subject to the approval policy. A finished job needs no retention and answers with the path to release it.",
+      "instructions": "Only use when leaving the process running is intended. Give a concrete reason and report the retained job ID to the user. Retention lasts until stopped or Aworkit exits; it does not detach a process from supervision. A job that has already finished is retained for this Chat anyway, so the call succeeds with kept=false and names job_release, which is the verb for acknowledging finished work you do not need to read.",
       "executor": "job.keep",
       "requiresProject": false,
       "execution": "native",
@@ -2176,6 +2184,43 @@
         ]
       },
       "providerName": "job_keep"
+    },
+    {
+      "id": "tool.job.release",
+      "name": "Release job",
+      "description": "Acknowledge a finished Chat job so the completion notice stops asking for it, optionally discarding its captured output.",
+      "instructions": "Use this instead of draining a large log into context: a released job no longer appears in the completion notice, and job_output still reports its status, exit code and byte counts. discardOutput deletes the captured stdout and stderr while keeping those counts. A running job must be stopped or kept first; releasing twice is a no-op.",
+      "executor": "job.release",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Job ID returned by shell, shell_start, python, python_start or job_list in this Chat."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Optional note on why the job is resolved, kept with the record."
+          },
+          "discardOutput": {
+            "type": "boolean",
+            "description": "Delete the captured stdout and stderr. The record keeps their byte counts and the job's exit status."
+          }
+        },
+        "required": [
+          "jobId"
+        ]
+      },
+      "providerName": "job_release"
     },
     {
       "id": "tool.python.start",

@@ -154,8 +154,9 @@ pub(super) fn freeze_graph_bindings(
                 let Some(native) =
                     crate::runtime::comfyui::comfyui_native_tool(&settings.comfyui, &tool_id)
                 else {
-                    warnings.push(format!(
-                        "ComfyUI tool '{tool_id}' is unavailable or disabled in Settings"
+                    warnings.push(comfyui_tool_warning(
+                        &settings.comfyui.workflow_tools,
+                        &tool_id,
                     ));
                     continue;
                 };
@@ -199,4 +200,63 @@ pub(super) fn freeze_graph_bindings(
         tools,
         warnings,
     })
+}
+
+/// Explains why a ComfyUI workflow tool id produced no binding.
+///
+/// Settings is the single enable decision and a Chat freezes its tools at the
+/// first input, so three different causes look identical to a model otherwise:
+/// the tool is disabled, it no longer exists because it was renamed, replaced or
+/// removed, or the id was never a workflow tool. Naming the cause and the next
+/// step keeps a model from hunting for a tool it cannot call.
+fn comfyui_tool_warning(
+    tools: &[crate::runtime::comfyui::ComfyUiWorkflowToolV2],
+    tool_id: &str,
+) -> String {
+    let id = crate::runtime::comfyui::comfyui_tool_id(tool_id).unwrap_or(tool_id);
+    match tools.iter().find(|tool| tool.id == id) {
+        Some(tool) if !tool.enabled => format!(
+            "ComfyUI tool '{tool_id}' is disabled in Settings; enable it and start a new Chat, because a Chat keeps the tools it started with"
+        ),
+        Some(_) => format!(
+            "ComfyUI tool '{tool_id}' is enabled in Settings but was not frozen into this Chat; start a new Chat"
+        ),
+        None => format!(
+            "ComfyUI tool '{tool_id}' is not configured in Settings; it may have been renamed, replaced or removed. A Chat keeps the tools it started with, so a tool configured now appears in the next Chat. Call comfyui_get_workflow without an argument to list the configured workflow tools"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool(id: &str, enabled: bool) -> crate::runtime::comfyui::ComfyUiWorkflowToolV2 {
+        crate::runtime::comfyui::ComfyUiWorkflowToolV2 {
+            id: id.into(),
+            name: id.into(),
+            description: String::new(),
+            workflow_path: format!("D:\\workflows\\{id}.json"),
+            enabled,
+            parameters: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_missing_comfyui_tool_names_the_cause_and_the_next_step() {
+        let tools = vec![tool("krea", true), tool("off", false)];
+        let disabled = comfyui_tool_warning(&tools, "comfyui.off");
+        assert!(disabled.contains("disabled in Settings"), "{disabled}");
+        assert!(disabled.contains("new Chat"), "{disabled}");
+
+        // The failing Chat asked for a tool id the user had replaced; the
+        // message must say so instead of claiming it is unavailable.
+        let absent = comfyui_tool_warning(&tools, "comfyui.qwen-image-2-1-turbo-text-to-image");
+        assert!(absent.contains("not configured in Settings"), "{absent}");
+        assert!(absent.contains("renamed"), "{absent}");
+        assert!(absent.contains("comfyui_get_workflow"), "{absent}");
+
+        // An id outside the ComfyUI prefix is described too, never panicking.
+        assert!(comfyui_tool_warning(&tools, "comfyui.missing").contains("not configured"));
+    }
 }

@@ -399,6 +399,15 @@ impl From<GoogleGeminiProviderError> for ProviderError {
             GoogleGeminiProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             GoogleGeminiProviderError::RequestTimedOut => Self::RequestTimedOut,
             GoogleGeminiProviderError::Transport => Self::TransportFailed,
+            GoogleGeminiProviderError::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            } => Self::HttpStatus {
+                status,
+                detail,
+                retry_after_seconds,
+            },
             other => Self::Failed(other.to_string()),
         }
     }
@@ -436,7 +445,11 @@ pub enum GoogleGeminiProviderError {
     Transport,
     /// The provider's own bounded diagnostic, when it sent one.
     #[error("Gemini provider returned HTTP status {status}{detail}")]
-    HttpStatus { status: u16, detail: String },
+    HttpStatus {
+        status: u16,
+        detail: String,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("Gemini response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("Gemini response is not valid JSON")]
@@ -621,9 +634,15 @@ fn map_transport_error(error: BoundedJsonError) -> GoogleGeminiProviderError {
         BoundedJsonError::RequestTimedOut => GoogleGeminiProviderError::RequestTimedOut,
         BoundedJsonError::Transport => GoogleGeminiProviderError::Transport,
         BoundedJsonError::ContextWindowExceeded => GoogleGeminiProviderError::ContextWindowExceeded,
-        BoundedJsonError::HttpStatus { status, detail } => {
-            GoogleGeminiProviderError::HttpStatus { status, detail }
-        }
+        BoundedJsonError::HttpStatus {
+            status,
+            detail,
+            retry_after_seconds,
+        } => GoogleGeminiProviderError::HttpStatus {
+            status,
+            detail,
+            retry_after_seconds,
+        },
         BoundedJsonError::ResponseTooLarge => GoogleGeminiProviderError::ResponseTooLarge,
         BoundedJsonError::InvalidJson => GoogleGeminiProviderError::InvalidJson,
     }

@@ -19,6 +19,17 @@ impl DesktopRuntime {
             return Err("pending Chat command failed command integrity validation".into());
         }
         let pending_id = pending.command.command_id.clone();
+        // What the interrupted attempt left behind, recorded with the recovery so
+        // the reason survives rather than being replaced by a fresh dispatch.
+        let mut recovery_report = json!({
+            "status": "resumed",
+            "reason": "The attempt was interrupted before a terminal result was committed.",
+        });
+        // An abrupt exit leaves its own bounded report: name it here, once, so the
+        // recovery carries the panic and how far the history had got.
+        if let Some(crash) = super::super::crash_report::last_report() {
+            recovery_report["previousExit"] = crash;
+        }
         match pending.command.action.as_str() {
             "question" => { self.complete_question(pending.command, fingerprint)?; }
             "approval" => { self.complete_approval(pending.command, fingerprint, Some(head))?; }
@@ -35,6 +46,7 @@ impl DesktopRuntime {
                 if !facts.is_empty() {
                     // Preparation is independently idempotent, not a receipt for
                     // the user's Continue action, which can still fail afterwards.
+                    recovery_report["closedSpanCount"] = json!(facts.len());
                     self.history.append(
                         &format!("{resume_command_id}.prepare"), resume_fingerprint, head, facts,
                     )?;
@@ -43,15 +55,23 @@ impl DesktopRuntime {
             }
             _ => return Err("This interrupted action cannot be continued. Stop this reply to send a new message.".into()),
         }
-        self.history.append(
+        let receipt = self.history.append(
             resume_command_id,
             resume_fingerprint,
             self.history.head()?,
             vec![(
                 "chat.recovery_completed",
-                json!({"createdAt": now_label(), "recoveredCommandId": pending_id}),
+                json!({
+                    "createdAt": now_label(),
+                    "recoveredCommandId": pending_id,
+                    "lastCommittedSequence": head,
+                    "report": recovery_report,
+                }),
             )],
-        )
+        )?;
+        // The report is now durable evidence; do not repeat it on every recovery.
+        super::super::crash_report::clear_last_report();
+        Ok(receipt)
     }
 
     /// Resolves an unrecoverable pending effect without pretending it never
@@ -112,6 +132,19 @@ impl DesktopRuntime {
                     .map(|fact| ("span.failed", fact)),
             );
         }
+        let mut recovery_report = json!({
+            "createdAt": created_at,
+            "status": "outcome_uncertain",
+            "reason": "The reply stopped before a terminal result was committed.",
+            "body": "The attempt may have reached the provider, but no conclusive terminal evidence was recorded. Automatic replay is forbidden; the reason and the last committed sequence are kept so the next dispatch resumes from them instead of starting over.",
+            "lastCommittedSequence": expected_version,
+            "pendingCommandId": pending.command.command_id,
+            "automaticReplayAllowed": false,
+        });
+        if let Some(crash) = super::super::crash_report::last_report() {
+            recovery_report["previousExit"] = crash;
+        }
+        facts.push(("chat.recovery_report", recovery_report));
         facts.push((
             "execution.failed",
             json!({
@@ -128,6 +161,7 @@ impl DesktopRuntime {
                 "pendingCommandHash":pending.command_hash,
                 "automaticReplayAllowed":false,
                 "recoveryAbandoned":true,
+                "lastCommittedSequence": expected_version,
             }),
         ));
         facts.push((
@@ -137,7 +171,9 @@ impl DesktopRuntime {
                 "body":"This reply was stopped. Changes already made have been kept."
             }),
         ));
-        self.history
-            .append(command_id, command_fingerprint, expected_version, facts)
+        let receipt = self.history
+            .append(command_id, command_fingerprint, expected_version, facts)?;
+        super::super::crash_report::clear_last_report();
+        Ok(receipt)
     }
 }

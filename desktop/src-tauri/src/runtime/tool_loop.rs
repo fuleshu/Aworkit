@@ -661,6 +661,12 @@ pub(crate) enum StoredFileToolLimitV1 {
         /// Frozen `(workflow tool id -> workflow file path)` table.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         workflows: BTreeMap<String, String>,
+        /// Frozen description of each configured workflow tool: id, display
+        /// name, enable state, workflow path and parameter bindings. Absent in
+        /// bindings frozen before the workbook became listable, so the reader
+        /// falls back to the id and path table above.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tools: Vec<Value>,
     },
 }
 
@@ -760,6 +766,7 @@ pub(crate) fn implied_job_control_ids(bound: &[String]) -> Vec<&'static str> {
         jobs::STOP,
         jobs::LIST,
         jobs::KEEP,
+        jobs::RELEASE,
     ]
 }
 
@@ -792,6 +799,7 @@ pub(crate) fn file_tool_descriptors()
         (jobs::STOP, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::STOP), SideEffectClass::IdempotentWrite, false),
         (jobs::LIST, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::LIST), SideEffectClass::ReadOnly, false),
         (jobs::KEEP, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::KEEP), SideEffectClass::IdempotentWrite, false),
+        (jobs::RELEASE, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::RELEASE), SideEffectClass::IdempotentWrite, false),
         (
             image_tools::READ,
             CapabilityKind::FileRead,
@@ -1355,7 +1363,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumBytes"),
                 },
             ),
-            "shell.start" | "python.start" | "job.output" | "job.input" | "job.stop" | "job.list" | "job.keep" => jobs::freeze(&requested.capability_id, &requested.configuration)?,
+            "shell.start" | "python.start" | "job.output" | "job.input" | "job.stop" | "job.list" | "job.keep" | "job.release" => jobs::freeze(&requested.capability_id, &requested.configuration)?,
             "shell.host" => (
                 SHELL_PROVIDER_NAME.to_owned(),
                 "Run a host shell command. With job controls enabled, long commands yield a job ID and continue running. The working directory is not a sandbox. Approval follows the selected mode.".to_owned(),
@@ -1595,10 +1603,11 @@ fn freeze_comfyui_authoring(
     let mut allowed = BTreeSet::from(["endpoint"]);
     if capability_id == crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID {
         allowed.insert("workflows");
+        allowed.insert("tools");
     }
     if object.keys().map(String::as_str).collect::<BTreeSet<_>>() != allowed {
         return Err(invalid_tool(
-            "ComfyUI authoring configuration accepts endpoint and, for the workflow reader, workflows",
+            "ComfyUI authoring configuration accepts endpoint and, for the workflow reader, workflows and tools",
         ));
     }
     let endpoint = object
@@ -1623,6 +1632,18 @@ fn freeze_comfyui_authoring(
             workflows.insert(id.clone(), path.to_owned());
         }
     }
+    let tools = match object.get("tools") {
+        Some(tools) => {
+            let tools = tools
+                .as_array()
+                .ok_or_else(|| invalid_tool("ComfyUI workflow tool list must be an array"))?;
+            if tools.len() > 256 || tools.iter().any(|tool| !tool.is_object()) {
+                return Err(invalid_tool("ComfyUI workflow tool list is unusable"));
+            }
+            tools.clone()
+        }
+        None => Vec::new(),
+    };
     let definition = requested
         .definition
         .clone()
@@ -1638,7 +1659,11 @@ fn freeze_comfyui_authoring(
             .unwrap_or_default()
             .to_owned(),
         crate::runtime::comfyui::comfyui_authoring_schema(capability_id),
-        StoredFileToolLimitV1::ComfyUiAuthoring { endpoint, workflows },
+        StoredFileToolLimitV1::ComfyUiAuthoring {
+            endpoint,
+            workflows,
+            tools,
+        },
     ))
 }
 
@@ -1868,6 +1893,8 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     lease_authority: Arc<ToolLeaseAuthority>,
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
     jobs: Arc<jobs::JobRegistry>,
+    /// Account-scoped provider limits observed by any pass or child of a Chat.
+    provider_limits: super::provider_limits::ProviderLimitRegistryV1,
     generation: ProcessGeneration,
     core_key: Arc<CoreAuthenticationKey>,
 }
@@ -1876,6 +1903,14 @@ impl FileToolAuthorityRuntimeV1 {
     pub(crate) fn job_stopper(&self) -> super::cancellation::JobStopper {
         let jobs = Arc::downgrade(&self.jobs);
         Arc::new(move |owner| { if let Some(jobs) = jobs.upgrade() { jobs.stop_all(owner); } })
+    }
+    /// The account-scoped provider limit this Chat already observed.
+    pub(crate) fn provider_limit(&self, chat_id: &str) -> Option<String> {
+        self.provider_limits.notice(chat_id)
+    }
+    /// Record the first account-scoped limit so every sibling stops dispatching.
+    pub(crate) fn record_provider_limit(&self, chat_id: &str, provider_text: &str) {
+        self.provider_limits.record(chat_id, provider_text);
     }
     #[cfg(test)]
     pub(super) fn recorded_exchanges(&self) -> Result<Vec<Value>, String> {
@@ -1924,6 +1959,7 @@ impl FileToolAuthorityRuntimeV1 {
             lease_authority: Arc::new(ToolLeaseAuthority::new(generation, credential_store)),
             mcp: Arc::new(McpToolRuntimeV1::new(generation)),
             jobs: jobs::JobRegistry::open(database.parent().ok_or_else(|| invalid_tool("job root unavailable"))?.join("shell-jobs")).map_err(WorkflowPipelineError::Store)?,
+            provider_limits: super::provider_limits::ProviderLimitRegistryV1::default(),
             generation,
             core_key,
         })
@@ -2233,6 +2269,32 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
         self.runtime.jobs.completion_notice(&self.context.chat_id)
     }
     fn stop_unkept_jobs(&self) { self.runtime.jobs.stop_unkept(&self.context.chat_id); }
+    fn pending_delegation_reports(&self) -> Result<Option<String>, String> {
+        self.pending_child_reports()
+    }
+    fn provider_limit_notice(&self) -> Option<String> {
+        self.runtime.provider_limit(&self.context.chat_id)
+    }
+    fn record_provider_limit(&self, provider_text: &str) {
+        self.runtime
+            .record_provider_limit(&self.context.chat_id, provider_text);
+    }
+    fn note_provider_failure(&self, class: &str, provider_text: &str, reaction: &str) {
+        // Committed as evidence before the next dispatch, so Run details shows
+        // both why the call failed and what was done about it.
+        let _ = self.run_events.context_event(
+            "context.provider-failure",
+            serde_json::json!({
+                "class": class,
+                "providerText": provider_text,
+                "reaction": reaction,
+                "chatId": self.context.chat_id,
+            }),
+        );
+    }
+    fn close_pass(&self) {
+        self.cancel_live_children();
+    }
     fn legacy_context_identity(&self) -> bool {
         self.context
             .model_context
@@ -4997,11 +5059,13 @@ fn validate_comfyui_authoring_arguments(
             }
         }
         crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID => {
-            object
-                .get("workflow")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty() && value.len() <= 128 && !value.contains('\0'))
-                .ok_or_else(|| invalid_tool("ComfyUI workflow id must be a bounded string"))?;
+            // The id is optional: omitting it lists the configured tools.
+            if let Some(workflow) = object.get("workflow") {
+                workflow
+                    .as_str()
+                    .filter(|value| !value.is_empty() && value.len() <= 128 && !value.contains('\0'))
+                    .ok_or_else(|| invalid_tool("ComfyUI workflow id must be a bounded string"))?;
+            }
         }
         _ => return Err(invalid_tool("unknown ComfyUI authoring capability")),
     }

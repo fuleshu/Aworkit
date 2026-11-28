@@ -38,6 +38,19 @@ pub struct ChildJobInfo {
     pub running: bool,
 }
 
+/// Captured byte counts recorded when an Agent discarded a job's output.
+///
+/// The record keeps the sizes so `job_list` and Run details can still explain
+/// what the job produced after the bytes themselves are gone.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscardedOutput {
+    /// Captured stdout bytes removed from the job directory.
+    pub stdout_bytes: u64,
+    /// Captured stderr bytes removed from the job directory.
+    pub stderr_bytes: u64,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Record {
@@ -55,6 +68,15 @@ struct Record {
     collected: bool,
     kept: Option<String>,
     interrupted: bool,
+    /// The Agent declared this job resolved without needing to read its output.
+    #[serde(default)]
+    released: bool,
+    /// The note the caller gave when releasing, when it gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    release_reason: Option<String>,
+    /// Byte counts captured when the output was discarded on release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    discarded: Option<DiscardedOutput>,
     /// Terminal child outcome for a delegated child job; absent for processes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     child: Option<Value>,
@@ -86,6 +108,26 @@ struct ChildJobState {
     /// Steering messages queued for the child's next step boundary.
     steering: Vec<String>,
     started: Option<Instant>,
+    /// The last committed step the child reported, and when it reported it.
+    /// A child that stops producing events is a stall, not progress.
+    last_sequence: u64,
+    last_activity: Option<Instant>,
+    /// Live counters, so a cancellation reports the work that really happened
+    /// instead of the zeros of the frame the child started from.
+    model_turns: u32,
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+/// How one live delegated child is spending its time and budget.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ChildLiveV1 {
+    pub running: bool,
+    pub last_sequence: u64,
+    pub age_seconds: u64,
+    pub model_turns: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 /// Shared handle of one in-process child run. The registry owns the durable
@@ -111,6 +153,7 @@ impl ChildJobHandle {
     pub fn progress(&self, line: &str, child: Value) {
         if let Ok(mut state) = self.state.lock() {
             state.progress = Some(child);
+            state.last_activity = Some(Instant::now());
         }
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
@@ -118,6 +161,46 @@ impl ChildJobHandle {
             .open(self.directory.join("stdout.log"))
         {
             let _ = writeln!(file, "{line}");
+        }
+    }
+
+    /// Records one committed child step. The sequence is what a stall report
+    /// names, so it must advance only when the child really produced a turn.
+    pub fn record_turn(&self, sequence: u32) {
+        if let Ok(mut state) = self.state.lock() {
+            state.last_sequence = state.last_sequence.max(u64::from(sequence));
+            state.model_turns = state.model_turns.max(sequence);
+            state.last_activity = Some(Instant::now());
+        }
+    }
+
+    /// Adds one accepted turn's token usage to the live counters.
+    pub fn record_usage(&self, input_tokens: u64, output_tokens: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            state.input_tokens = state.input_tokens.saturating_add(input_tokens);
+            state.output_tokens = state.output_tokens.saturating_add(output_tokens);
+            state.last_activity = Some(Instant::now());
+        }
+    }
+
+    /// The live counters and last committed sequence, for a settlement report or
+    /// a stall report that must describe real work.
+    pub fn live(&self) -> ChildLiveV1 {
+        let Ok(state) = self.state.lock() else {
+            return ChildLiveV1::default();
+        };
+        let since = state
+            .last_activity
+            .or(state.started)
+            .map(|instant| instant.elapsed().as_secs())
+            .unwrap_or(0);
+        ChildLiveV1 {
+            running: state.running,
+            last_sequence: state.last_sequence,
+            age_seconds: since,
+            model_turns: state.model_turns,
+            input_tokens: state.input_tokens,
+            output_tokens: state.output_tokens,
         }
     }
 
@@ -368,6 +451,9 @@ impl JobRegistry {
             collected: false,
             kept: None,
             interrupted: false,
+            released: false,
+            release_reason: None,
+            discarded: None,
             child: None,
         };
         // Commit identity before the side effect. A crash in this gap is uncertain, never replayed.
@@ -444,6 +530,9 @@ impl JobRegistry {
             collected: false,
             kept: None,
             interrupted: false,
+            released: false,
+            release_reason: None,
+            discarded: None,
             child: Some(json!({"childId": child_id, "status": "running"})),
         };
         save(&state.connection, &record)?;
@@ -493,12 +582,44 @@ impl JobRegistry {
         wait: Duration,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
+        self.output_window(owner, id, cursor, maximum, wait, false, cancellation)
+    }
+
+    /// Reads the end of a job's captured streams instead of the next window.
+    ///
+    /// A tail window needs no cursor: it answers "how did this end?" for a log
+    /// the Agent never intended to read in full, and reports how many bytes
+    /// preceded the window.
+    pub fn tail(
+        &self,
+        owner: &str,
+        id: &str,
+        maximum: usize,
+        wait: Duration,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, String> {
+        self.output_window(owner, id, None, maximum, wait, true, cancellation)
+    }
+
+    fn output_window(
+        &self,
+        owner: &str,
+        id: &str,
+        cursor: Option<ProcessOutputCursor>,
+        maximum: usize,
+        wait: Duration,
+        tail: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, String> {
         self.refresh()?;
         let (runner, record) = {
             let state = self.state.lock().map_err(err)?;
             let entry = owned(&state, owner, id)?;
             (entry.runner.clone(), entry.record.clone())
         };
+        if tail {
+            return self.tail_window(owner, id, maximum, wait, cancellation);
+        }
         let cursor = cursor.unwrap_or(record.cursor);
         let directory = self.root.join(id);
         let stdout_path = directory.join("stdout.log");
@@ -519,22 +640,7 @@ impl JobRegistry {
             // A delegated child writes progress to the same captured logs, so a
             // soft wait and a cursor read behave exactly like a process job.
             if record.snapshot.running && !wait.is_zero() {
-                let deadline = Instant::now() + wait;
-                while Instant::now() < deadline && !cancellation.is_cancelled() {
-                    self.refresh()?;
-                    let running = {
-                        let state = self.state.lock().map_err(err)?;
-                        state
-                            .entries
-                            .get(id)
-                            .is_some_and(|entry| entry.record.snapshot.running)
-                    };
-                    if !running {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(20));
-                }
-                self.refresh()?;
+                self.await_settlement(owner, id, wait, cancellation)?;
             }
             let record = {
                 let state = self.state.lock().map_err(err)?;
@@ -569,7 +675,82 @@ impl JobRegistry {
                 more,
             }
         };
-        self.output_result(owner, id, &directory, output)
+        self.output_result(owner, id, &directory, output, 0, false)
+    }
+
+    /// Reads the last bytes of both captured streams of one job.
+    ///
+    /// A tail read is a window over the captured files, so a delegated child and
+    /// a process report identically. Two non-empty streams split the page
+    /// evenly; a single non-empty stream gets all of it.
+    fn tail_window(
+        &self,
+        owner: &str,
+        id: &str,
+        maximum: usize,
+        wait: Duration,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, String> {
+        let running = {
+            let state = self.state.lock().map_err(err)?;
+            owned(&state, owner, id)?.record.snapshot.running
+        };
+        if running && !wait.is_zero() {
+            self.await_settlement(owner, id, wait, cancellation)?;
+        }
+        let (record, directory) = {
+            let state = self.state.lock().map_err(err)?;
+            let entry = owned(&state, owner, id)?;
+            (entry.record.clone(), self.root.join(id))
+        };
+        let captured = captured_tail(&directory, maximum)?;
+        let snapshot = ProcessSnapshot {
+            stdout_bytes: captured.stdout_total,
+            stderr_bytes: captured.stderr_total,
+            ..record.snapshot
+        };
+        self.output_result(
+            owner,
+            id,
+            &directory,
+            ProcessOutput {
+                snapshot,
+                stdout: captured.stdout,
+                stderr: captured.stderr,
+                next: captured.next,
+                // A tail window ends at the end of the captured bytes; the
+                // terminal check in output_result still reports newer output.
+                more: false,
+            },
+            captured.omitted,
+            true,
+        )
+    }
+
+    /// Waits until a job stops running or the soft wait elapses.
+    ///
+    /// The deadline bounds the wait, never the job: a still-running job is
+    /// reported by the caller as running.
+    fn await_settlement(
+        &self,
+        owner: &str,
+        id: &str,
+        wait: Duration,
+        cancellation: &CancellationToken,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + wait;
+        while Instant::now() < deadline && !cancellation.is_cancelled() {
+            self.refresh()?;
+            let running = {
+                let state = self.state.lock().map_err(err)?;
+                owned(&state, owner, id)?.record.snapshot.running
+            };
+            if !running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        self.refresh()
     }
 
     /// Render a captured read without changing lifecycle state. The supervisor
@@ -580,6 +761,8 @@ impl JobRegistry {
         id: &str,
         directory: &Path,
         output: ProcessOutput,
+        omitted: u64,
+        tail: bool,
     ) -> Result<Value, String> {
         let state = self.state.lock().map_err(err)?;
         let entry = owned(&state, owner, id)?;
@@ -616,9 +799,18 @@ impl JobRegistry {
             "stderr":String::from_utf8_lossy(&stderr),
             "cursor":next,
             "moreOutput":more,
+            // The captured totals let the caller size the next read instead of
+            // paging blindly; remainingBytes is what is still unread.
+            "stdoutBytes":snapshot.stdout_bytes,
+            "stderrBytes":snapshot.stderr_bytes,
+            "remainingBytes":snapshot.stdout_bytes.saturating_sub(next.stdout)
+                + snapshot.stderr_bytes.saturating_sub(next.stderr),
+            "mode":if tail { "tail" } else { "read" },
+            "omittedBytes":omitted,
             "error":snapshot.error,
             "inputError":snapshot.input_error,
             "kept":record.kept,
+            "released":record.released,
             "outputDirectory":directory,
             "child":live.or(record.child),
         }))
@@ -657,18 +849,28 @@ impl JobRegistry {
             }
         }
         if operation == "job_output" {
-            let cursor = args
+            let cursor: Option<ProcessOutputCursor> = args
                 .get("cursor")
                 .map(|c| serde_json::from_value(c.clone()))
                 .transpose()
                 .map_err(err)?;
-            return self.output(
+            let maximum = args["maximumBytes"].as_u64().unwrap_or(65536) as usize;
+            let wait = Duration::from_millis(args["waitMs"].as_u64().unwrap_or(0));
+            // `tail` reads the end of the captured streams; `read` continues
+            // from the cursor. Both share the same bounded page.
+            if args["mode"].as_str() == Some("tail") {
+                return self.tail(owner, id, maximum, wait, cancellation);
+            }
+            return self.output(owner, id, cursor, maximum, wait, cancellation);
+        }
+        if operation == "job_release" {
+            // Resolution needs no runner: a finished job whose process is gone
+            // is exactly the case that must stay releasable.
+            return self.release(
                 owner,
                 id,
-                cursor,
-                args["maximumBytes"].as_u64().unwrap_or(65536) as usize,
-                Duration::from_millis(args["waitMs"].as_u64().unwrap_or(0)),
-                cancellation,
+                args["reason"].as_str(),
+                args["discardOutput"].as_bool().unwrap_or(false),
             );
         }
         let runner = {
@@ -693,7 +895,7 @@ impl JobRegistry {
                 }
                 "job_keep" => {
                     if !handle.is_running() {
-                        return Err("job has already exited; collect its output".into());
+                        return self.keep_finished(owner, id);
                     }
                     let reason = args["reason"].as_str().ok_or("reason missing")?;
                     self.keep(owner, id, reason)?;
@@ -707,6 +909,9 @@ impl JobRegistry {
                 let Some(session) = session else {
                     if operation == "job_stop" {
                         return self.output(owner, id, None, 65536, Duration::ZERO, cancellation);
+                    }
+                    if operation == "job_keep" {
+                        return self.keep_finished(owner, id);
                     }
                     return Err("job is no longer attached to a live process".into());
                 };
@@ -736,7 +941,7 @@ impl JobRegistry {
                     }
                     "job_keep" => {
                         if !session.snapshot().map_err(err)?.running {
-                            return Err("job has already exited; collect its output".into());
+                            return self.keep_finished(owner, id);
                         }
                         let reason = args["reason"].as_str().ok_or("reason missing")?;
                         self.keep(owner, id, reason)?;
@@ -751,9 +956,101 @@ impl JobRegistry {
                 if operation == "job_stop" {
                     return self.output(owner, id, None, 65536, Duration::ZERO, cancellation);
                 }
+                // A retained record whose runner is gone (a restart, or a
+                // finished job) still answers the disposition questions.
+                if operation == "job_keep" {
+                    return self.keep_finished(owner, id);
+                }
                 Err("job is no longer attached to a live process".into())
             }
         }
+    }
+
+    /// Answers a keep request for a job that is already finished.
+    ///
+    /// A finished job is retained for the Chat already, so there is nothing to
+    /// keep; the honest answer is a success that names the verb the Agent
+    /// actually needs. A failure here made a legitimate question look like a
+    /// broken tool and pushed one recorded run into editing the host's logs.
+    fn keep_finished(&self, owner: &str, id: &str) -> Result<Value, String> {
+        let state = self.state.lock().map_err(err)?;
+        let record = owned(&state, owner, id)?.record.clone();
+        Ok(json!({
+            "jobId": id,
+            "kept": false,
+            "alreadyFinished": true,
+            "status": job_status(&record, &record.snapshot),
+            "hint": "a finished job is retained for this Chat; call job_release to acknowledge it without reading its output",
+        }))
+    }
+
+    /// Records that the Agent is done with a finished job.
+    ///
+    /// `discard` deletes the captured logs and keeps their byte counts, so a job
+    /// whose output nobody wants stops occupying disk and can never be read by
+    /// accident. A running job must be stopped or kept first.
+    fn release(
+        &self,
+        owner: &str,
+        id: &str,
+        reason: Option<&str>,
+        discard: bool,
+    ) -> Result<Value, String> {
+        let mut state = self.state.lock().map_err(err)?;
+        let State {
+            connection,
+            entries,
+        } = &mut *state;
+        let entry = entries
+            .get_mut(id)
+            .filter(|entry| entry.record.owner == owner)
+            .ok_or("job does not exist in this Chat")?;
+        if entry.record.snapshot.running {
+            return Err(
+                "job is still running; use job_stop to cancel it or job_keep to leave it running, then release it"
+                    .into(),
+            );
+        }
+        let already = entry.record.released;
+        let mut record = entry.record.clone();
+        if discard && record.discarded.is_none() {
+            let directory = self.root.join(id);
+            let discarded = DiscardedOutput {
+                stdout_bytes: std::fs::metadata(directory.join("stdout.log"))
+                    .map_or(0, |m| m.len()),
+                stderr_bytes: std::fs::metadata(directory.join("stderr.log"))
+                    .map_or(0, |m| m.len()),
+            };
+            for name in ["stdout.log", "stderr.log"] {
+                let path = directory.join(name);
+                if let Err(error) = std::fs::remove_file(&path)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(err(error));
+                }
+            }
+            // The bytes are gone: report no captured bytes and a cursor at the
+            // start, so a later read cannot claim to resume an old offset.
+            record.snapshot.stdout_bytes = 0;
+            record.snapshot.stderr_bytes = 0;
+            record.cursor = ProcessOutputCursor::default();
+            record.discarded = Some(discarded);
+        }
+        record.released = true;
+        if let Some(reason) = reason {
+            record.release_reason = Some(reason.to_owned());
+        }
+        save(connection, &record)?;
+        let status = job_status(&record, &record.snapshot);
+        let discarded = record.discarded.clone();
+        entry.record = record;
+        Ok(json!({
+            "jobId": id,
+            "released": true,
+            "alreadyReleased": already,
+            "status": status,
+            "discardedOutput": discarded,
+        }))
     }
 
     fn keep(&self, owner: &str, id: &str, reason: &str) -> Result<(), String> {
@@ -816,7 +1113,34 @@ impl JobRegistry {
     pub fn list_scoped(&self, owner: &str, scope: Option<&str>) -> Result<Value, String> {
         let state = self.state.lock().map_err(err)?;
         Ok(
-            json!({"jobs":state.entries.values().filter(|e| e.record.owner == owner && scope.is_none_or(|s| e.record.scope.as_deref() == Some(s))).map(|e| json!({"jobId":e.record.id,"kind":e.record.kind,"running":e.record.snapshot.running,"status":job_status(&e.record, &e.record.snapshot),"childId":e.record.child.as_ref().and_then(|child| child["childId"].as_str()),"exitCode":e.record.snapshot.exit_code,"error":e.record.snapshot.error,"collected":e.record.collected,"kept":e.record.kept,"cursor":e.record.cursor})).collect::<Vec<_>>()}),
+            json!({
+                "jobs": state
+                    .entries
+                    .values()
+                    .filter(|e| {
+                        e.record.owner == owner
+                            && scope.is_none_or(|s| e.record.scope.as_deref() == Some(s))
+                    })
+                    .map(|e| json!({
+                        "jobId": e.record.id,
+                        "kind": e.record.kind,
+                        "running": e.record.snapshot.running,
+                        "status": job_status(&e.record, &e.record.snapshot),
+                        "childId": e.record.child.as_ref().and_then(|child| child["childId"].as_str()),
+                        "exitCode": e.record.snapshot.exit_code,
+                        "error": e.record.snapshot.error,
+                        "collected": e.record.collected,
+                        "kept": e.record.kept,
+                        "released": e.record.released,
+                        // Captured sizes stay listed after a discard, so a
+                        // resolved job can still be explained without its bytes.
+                        "stdoutBytes": e.record.snapshot.stdout_bytes,
+                        "stderrBytes": e.record.snapshot.stderr_bytes,
+                        "discardedOutput": e.record.discarded,
+                        "cursor": e.record.cursor,
+                    }))
+                    .collect::<Vec<_>>()
+            }),
         )
     }
 
@@ -843,6 +1167,31 @@ impl JobRegistry {
     /// restart and must never be read as running.
     pub fn child_running(&self, owner: &str, child_id: &str) -> bool {
         self.running_child_job(owner, child_id).is_some()
+    }
+
+    /// The live counters of one delegated child, including when it last produced
+    /// a step. A frame that still says `running` without a live job has been
+    /// interrupted; a live job whose sequence has not advanced is a stall.
+    pub fn child_live(&self, owner: &str, child_id: &str) -> Option<ChildLiveV1> {
+        let _ = self.refresh();
+        let state = self.state.lock().ok()?;
+        state
+            .entries
+            .values()
+            .find(|entry| {
+                entry.record.owner == owner
+                    && entry.record.kind == JobKind::Subagent
+                    && entry
+                        .record
+                        .child
+                        .as_ref()
+                        .and_then(|child| child["childId"].as_str())
+                        == Some(child_id)
+            })
+            .and_then(|entry| match &entry.runner {
+                Some(Runner::Child(handle)) => Some(handle.live()),
+                _ => None,
+            })
     }
 
     /// The live job id of one delegated child, when it has one.
@@ -893,7 +1242,9 @@ impl JobRegistry {
                     && if e.record.snapshot.running {
                         e.record.kept.is_none()
                     } else {
-                        !e.record.collected
+                        // A terminal job is resolved by reading it to the end or
+                        // by releasing it; only an unresolved one is reported.
+                        !e.record.collected && !e.record.released
                     }
             })
             .map(|e| {
@@ -923,7 +1274,7 @@ const MAXIMUM_NOTICE_INVENTORY_BYTES: usize = 2048;
 /// Room for the omitted-count sentence, whose digits vary.
 const OMISSION_RESERVE: usize = 96;
 const NOTICE_FRAME: &str = "Before finishing this response, resolve these jobs: ";
-const NOTICE_TRAILER: &str = ". Use job_output to read/wait, job_input to steer a running subagent or send stdin to a process, job_stop to cancel, or job_keep with an explicit reason if leaving background work running is intended. Do not start a replacement for an existing job. A soft wait is not a failure.";
+const NOTICE_TRAILER: &str = ". Use job_output to read/wait (mode=tail shows the end of a long log), job_input to steer a running subagent or send stdin to a process, job_stop to cancel, job_release to acknowledge a finished job without reading it, or job_keep with an explicit reason if leaving background work running is intended. Do not start a replacement for an existing job. A soft wait is not a failure.";
 
 /// Render one bounded job-inventory summary from already-rendered job lines.
 ///
@@ -1003,14 +1354,16 @@ fn job_status(record: &Record, snapshot: &ProcessSnapshot) -> &'static str {
     }
 }
 
-/// Retains at most 128 captured jobs. Only acknowledged terminal records
-/// are evicted; running or uncollected work can never disappear here.
+/// Retains at most 128 captured jobs. Only terminal records the Agent resolved
+/// are evicted; running or unresolved work can never disappear here.
 fn admit_new_job(root: &Path, state: &mut State, owner: &str) -> Result<(), String> {
     while state.entries.len() >= 128 {
         let old = state
             .entries
             .iter()
-            .find(|(_, e)| !e.record.snapshot.running && e.record.collected)
+            .find(|(_, e)| {
+                !e.record.snapshot.running && (e.record.collected || e.record.released)
+            })
             .map(|(id, _)| id.clone())
             .ok_or("job history is full; collect finished jobs first")?;
         if old.len() != 68
@@ -1060,6 +1413,78 @@ fn save(connection: &Connection, record: &Record) -> Result<(), String> {
     connection.execute("INSERT INTO jobs(id,record) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET record=excluded.record", params![record.id, serde_json::to_string(record).map_err(err)?]).map_err(err)?;
     Ok(())
 }
+/// One tail window over a job's captured streams and the bytes it skipped.
+struct CapturedTailV1 {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    next: ProcessOutputCursor,
+    omitted: u64,
+    stdout_total: u64,
+    stderr_total: u64,
+}
+
+/// Reads the end of a job's captured stdout and stderr.
+///
+/// A tail is the cheap way to see how a long command ended, so it never pages
+/// from the start: each non-empty stream is read backwards from its end, two
+/// non-empty streams split the page evenly, and the number of bytes before the
+/// window is reported so the omission is explicit.
+fn captured_tail(directory: &Path, maximum: usize) -> Result<CapturedTailV1, String> {
+    let stdout_path = directory.join("stdout.log");
+    let stderr_path = directory.join("stderr.log");
+    let stdout_total = std::fs::metadata(&stdout_path).map_or(0, |m| m.len());
+    let stderr_total = std::fs::metadata(&stderr_path).map_or(0, |m| m.len());
+    let (stdout_budget, stderr_budget) = match (stdout_total > 0, stderr_total > 0) {
+        (true, true) => (maximum / 2, maximum - maximum / 2),
+        (true, false) => (maximum, 0),
+        (false, true) => (0, maximum),
+        (false, false) => (0, 0),
+    };
+    let stdout = read_tail(&stdout_path, stdout_budget)?;
+    let stderr = read_tail(&stderr_path, stderr_budget)?;
+    let omitted = stdout_total.saturating_sub(stdout.len() as u64)
+        + stderr_total.saturating_sub(stderr.len() as u64);
+    Ok(CapturedTailV1 {
+        next: ProcessOutputCursor {
+            stdout: stdout_total,
+            stderr: stderr_total,
+        },
+        stdout,
+        stderr,
+        omitted,
+        stdout_total,
+        stderr_total,
+    })
+}
+
+/// Reads at most `maximum` bytes from the end of one captured file.
+fn read_tail(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
+    if maximum == 0 {
+        return Ok(Vec::new());
+    }
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(err(error)),
+    };
+    let length = file.metadata().map_err(err)?.len();
+    let start = length.saturating_sub(maximum as u64);
+    file.seek(SeekFrom::Start(start)).map_err(err)?;
+    let mut bytes = Vec::new();
+    file.take(length - start)
+        .read_to_end(&mut bytes)
+        .map_err(err)?;
+    // A window that begins mid-line is trimmed to its first complete line, so a
+    // tail reads as text instead of starting with a torn character; the reported
+    // omission grows by exactly what was trimmed.
+    if start > 0
+        && let Some(index) = bytes.iter().position(|byte| *byte == b'\n')
+    {
+        bytes.drain(..=index);
+    }
+    Ok(bytes)
+}
+
 fn read(path: &Path, cursor: u64, maximum: usize) -> Result<Vec<u8>, String> {
     let mut file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -1111,7 +1536,7 @@ mod tests {
         finish.send(()).unwrap();
         registry.await_terminal(owner, &id).unwrap();
         let late = registry
-            .output_result(owner, &id, &registry.root.join(&id), captured)
+            .output_result(owner, &id, &registry.root.join(&id), captured, 0, false)
             .unwrap();
         assert_eq!(late["status"], "completed");
         assert_eq!(late["moreOutput"], true);
@@ -1254,5 +1679,323 @@ mod tests {
                 .unwrap()
                 .contains("interrupted")
         );
+    }
+
+    /// A finished job can be resolved without reading it: the completion notice
+    /// must be satisfiable without draining a log into the model context.
+    #[test]
+    fn a_released_job_leaves_the_notice_without_being_read() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = JobRegistry::open(root.path().join("jobs")).unwrap();
+        let token = CancellationToken::default();
+        let id = registry
+            .start_child_scoped(
+                "chat.release",
+                "invocation.release",
+                None,
+                "child.release",
+                CancellationToken::default(),
+                |handle, _| {
+                    handle.progress("first line", json!({"status":"running"}));
+                    Ok(json!({"childId":"child.release","status":"completed"}))
+                },
+            )
+            .unwrap();
+        registry.await_terminal("chat.release", &id).unwrap();
+        assert!(registry.completion_notice("chat.release").unwrap().is_some());
+
+        let released = registry
+            .control_scoped("chat.release", None, "job_release", &json!({"jobId": id}), &token)
+            .unwrap();
+        assert_eq!(released["released"], true);
+        assert_eq!(released["alreadyReleased"], false);
+        assert!(registry.completion_notice("chat.release").unwrap().is_none());
+
+        // Releasing again is a no-op, and the record still admits it was never read.
+        let again = registry
+            .control_scoped(
+                "chat.release",
+                None,
+                "job_release",
+                &json!({"jobId": id, "reason":"duplicate"}),
+                &token,
+            )
+            .unwrap();
+        assert_eq!(again["alreadyReleased"], true);
+        let listed = registry.list_scoped("chat.release", None).unwrap();
+        assert_eq!(listed["jobs"][0]["released"], true);
+        assert_eq!(listed["jobs"][0]["collected"], false);
+        assert!(
+            listed["jobs"][0]["stdoutBytes"].as_u64().unwrap() > 0,
+            "{listed}"
+        );
+    }
+
+    #[test]
+    fn release_can_discard_the_captured_output_and_keeps_its_counts() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = JobRegistry::open(root.path().join("jobs")).unwrap();
+        let token = CancellationToken::default();
+        let id = registry
+            .start_child_scoped(
+                "chat.discard",
+                "invocation.discard",
+                None,
+                "child.discard",
+                CancellationToken::default(),
+                |handle, _| {
+                    for index in 0..20 {
+                        handle.progress(&format!("line {index}"), json!({"status":"running"}));
+                    }
+                    Ok(json!({"childId":"child.discard","status":"completed"}))
+                },
+            )
+            .unwrap();
+        registry.await_terminal("chat.discard", &id).unwrap();
+        let directory = registry.root.join(&id);
+        let captured = std::fs::metadata(directory.join("stdout.log")).unwrap().len();
+        assert!(captured > 0);
+
+        let released = registry
+            .control_scoped(
+                "chat.discard",
+                None,
+                "job_release",
+                &json!({"jobId": id, "discardOutput": true}),
+                &token,
+            )
+            .unwrap();
+        assert_eq!(released["discardedOutput"]["stdoutBytes"], json!(captured));
+        assert!(!directory.join("stdout.log").exists());
+        assert!(!directory.join("stderr.log").exists());
+
+        // The record still explains the job; only the bytes are gone.
+        let listed = registry.list_scoped("chat.discard", None).unwrap();
+        assert_eq!(listed["jobs"][0]["status"], "completed");
+        assert_eq!(listed["jobs"][0]["stdoutBytes"], json!(0));
+        assert_eq!(
+            listed["jobs"][0]["discardedOutput"]["stdoutBytes"],
+            json!(captured)
+        );
+        let read = registry
+            .output("chat.discard", &id, None, 4096, Duration::ZERO, &token)
+            .unwrap();
+        assert_eq!(read["stdout"], "");
+        assert_eq!(read["stdoutBytes"], json!(0));
+        assert_eq!(read["moreOutput"], json!(false));
+    }
+
+    #[test]
+    fn release_refuses_a_running_job_and_keep_answers_with_the_release_path() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = JobRegistry::open(root.path().join("jobs")).unwrap();
+        let token = CancellationToken::default();
+        let id = registry
+            .start_child_scoped(
+                "chat.busy",
+                "invocation.busy",
+                None,
+                "child.busy",
+                token.clone(),
+                |_, token| {
+                    while !token.is_cancelled() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Ok(json!({"childId":"child.busy","status":"cancelled"}))
+                },
+            )
+            .unwrap();
+        let refused = registry
+            .control_scoped(
+                "chat.busy",
+                None,
+                "job_release",
+                &json!({"jobId": id}),
+                &CancellationToken::default(),
+            )
+            .unwrap_err();
+        assert!(refused.contains("still running"), "{refused}");
+
+        token.cancel();
+        registry.await_terminal("chat.busy", &id).unwrap();
+        // Keeping a finished job is a legitimate question with a useful answer,
+        // not a failed tool event.
+        let kept = registry
+            .control_scoped(
+                "chat.busy",
+                None,
+                "job_keep",
+                &json!({"jobId": id, "reason":"already done"}),
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        assert_eq!(kept["kept"], json!(false));
+        assert_eq!(kept["alreadyFinished"], json!(true));
+        assert!(
+            kept["hint"].as_str().unwrap().contains("job_release"),
+            "{kept}"
+        );
+    }
+
+    #[test]
+    fn keep_after_restart_answers_instead_of_failing() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("jobs");
+        let registry = JobRegistry::open(path.clone()).unwrap();
+        let id = registry
+            .start_child_scoped(
+                "chat.restart",
+                "invocation.restart",
+                None,
+                "child.restart",
+                CancellationToken::default(),
+                |_, _| Ok(json!({"childId":"child.restart","status":"completed"})),
+            )
+            .unwrap();
+        registry.await_terminal("chat.restart", &id).unwrap();
+        drop(registry);
+
+        // The runner is gone after a restart; the finished record still answers.
+        let reopened = JobRegistry::open(path).unwrap();
+        let kept = reopened
+            .control_scoped(
+                "chat.restart",
+                None,
+                "job_keep",
+                &json!({"jobId": id, "reason":"done"}),
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        assert_eq!(kept["alreadyFinished"], json!(true));
+    }
+
+    #[test]
+    fn a_tail_read_returns_the_end_and_reports_what_it_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = JobRegistry::open(root.path().join("jobs")).unwrap();
+        let token = CancellationToken::default();
+        let id = registry
+            .start_child_scoped(
+                "chat.tail",
+                "invocation.tail",
+                None,
+                "child.tail",
+                CancellationToken::default(),
+                |handle, _| {
+                    for index in 0..200 {
+                        handle.progress(&format!("line {index}"), json!({"status":"running"}));
+                    }
+                    Ok(json!({"childId":"child.tail","status":"completed"}))
+                },
+            )
+            .unwrap();
+        registry.await_terminal("chat.tail", &id).unwrap();
+
+        let tail = registry
+            .tail("chat.tail", &id, 32, Duration::ZERO, &token)
+            .unwrap();
+        let total = tail["stdoutBytes"].as_u64().unwrap();
+        assert!(total > 32, "{tail}");
+        let text = tail["stdout"].as_str().unwrap();
+        // A tail window is trimmed to its first complete line.
+        assert!(text.ends_with("line 199\n"), "{text}");
+        assert!(text.len() <= 32, "{text}");
+        assert_eq!(tail["mode"], json!("tail"));
+        assert_eq!(tail["omittedBytes"], json!(total - text.len() as u64));
+        assert_eq!(tail["remainingBytes"], json!(0));
+        assert_eq!(tail["moreOutput"], json!(false));
+        assert_eq!(tail["cursor"]["stdout"], json!(total));
+    }
+
+    #[test]
+    fn a_read_reports_the_captured_totals_and_what_remains() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = JobRegistry::open(root.path().join("jobs")).unwrap();
+        let token = CancellationToken::default();
+        let id = registry
+            .start_child_scoped(
+                "chat.totals",
+                "invocation.totals",
+                None,
+                "child.totals",
+                CancellationToken::default(),
+                |handle, _| {
+                    for index in 0..20 {
+                        handle.progress(&format!("line {index}"), json!({"status":"running"}));
+                    }
+                    Ok(json!({"childId":"child.totals","status":"completed"}))
+                },
+            )
+            .unwrap();
+        registry.await_terminal("chat.totals", &id).unwrap();
+        let read = registry
+            .output("chat.totals", &id, None, 8, Duration::ZERO, &token)
+            .unwrap();
+        let total = read["stdoutBytes"].as_u64().unwrap();
+        assert!(total > 8, "{read}");
+        assert_eq!(read["stderrBytes"], json!(0));
+        assert_eq!(read["remainingBytes"], json!(total - 8));
+        assert_eq!(read["moreOutput"], json!(true));
+        assert_eq!(read["mode"], json!("read"));
+        assert_eq!(read["omittedBytes"], json!(0));
+    }
+}
+
+#[cfg(test)]
+mod live_child_tests {
+    use super::*;
+
+    /// The counters a settlement or cancellation reports must describe the work
+    /// the child really did. The recorded incident reported zero turns and zero
+    /// tokens for children that had already run six to eight model turns.
+    #[test]
+    fn a_live_child_reports_the_turns_and_tokens_it_really_spent() {
+        let directory = std::env::temp_dir().join(format!(
+            "aworkit-child-live-{}-{}",
+            std::process::id(),
+            "counters"
+        ));
+        std::fs::create_dir_all(&directory).expect("temporary child directory");
+        let handle = ChildJobHandle {
+            cancellation: CancellationToken::default(),
+            directory,
+            state: Mutex::new(ChildJobState {
+                running: true,
+                started: Some(Instant::now()),
+                ..Default::default()
+            }),
+        };
+        assert_eq!(handle.live().model_turns, 0);
+        handle.record_turn(7);
+        handle.record_usage(200, 40);
+        let live = handle.live();
+        assert_eq!(live.model_turns, 7);
+        assert_eq!(live.last_sequence, 7);
+        assert_eq!(live.input_tokens, 200);
+        assert_eq!(live.output_tokens, 40);
+        assert!(live.running);
+    }
+
+    #[test]
+    fn a_child_that_stopped_reporting_has_an_age_to_show() {
+        let directory = std::env::temp_dir().join(format!(
+            "aworkit-child-live-{}-{}",
+            std::process::id(),
+            "stall"
+        ));
+        std::fs::create_dir_all(&directory).expect("temporary child directory");
+        let handle = ChildJobHandle {
+            cancellation: CancellationToken::default(),
+            directory,
+            state: Mutex::new(ChildJobState {
+                running: true,
+                started: Some(Instant::now() - Duration::from_secs(600)),
+                ..Default::default()
+            }),
+        };
+        // The age is measured from the last committed step or, before the first
+        // one, from the moment the child started.
+        assert!(handle.live().age_seconds >= 600);
+        assert_eq!(handle.live().last_sequence, 0);
     }
 }

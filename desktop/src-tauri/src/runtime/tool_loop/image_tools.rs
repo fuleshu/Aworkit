@@ -38,6 +38,10 @@ pub(super) fn freeze(
 }
 
 /// Recover image metadata only from these trusted, settled native capabilities.
+///
+/// A ComfyUI workflow call reports every image it produced in `images`; the
+/// single-image tools report one in `image`. Both shapes are read, so a batch
+/// render reaches the model as several attachments instead of one.
 pub(super) fn result_images(
     id: &str,
     content: &Value,
@@ -49,13 +53,18 @@ pub(super) fn result_images(
     {
         return Ok(Vec::new());
     }
-    let Some(value) = content.get("image") else {
-        return Ok(Vec::new());
+    let values: Vec<&Value> = match content.get("images").and_then(Value::as_array) {
+        Some(images) if !images.is_empty() => images.iter().collect(),
+        _ => content.get("image").into_iter().collect(),
     };
-    let image: ImageAttachmentV1 =
-        serde_json::from_value(value.clone()).map_err(|e| invalid_tool(&e.to_string()))?;
-    image.validate().map_err(|e| invalid_tool(&e.to_string()))?;
-    Ok(vec![image])
+    let mut attachments = Vec::with_capacity(values.len());
+    for value in values {
+        let image: ImageAttachmentV1 =
+            serde_json::from_value(value.clone()).map_err(|e| invalid_tool(&e.to_string()))?;
+        image.validate().map_err(|e| invalid_tool(&e.to_string()))?;
+        attachments.push(image);
+    }
+    Ok(attachments)
 }
 
 impl FileToolDispatcherV1 {

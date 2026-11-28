@@ -386,6 +386,7 @@ fn new_provider_adapters_redact_keys_deny_redirects_and_enforce_bounds() {
         Err(AnthropicMessagesProviderError::HttpStatus {
             status: 302,
             detail: String::new(),
+            retry_after_seconds: None,
         })
     );
     anthropic_server.join().expect("redirect fixture");
@@ -447,6 +448,7 @@ fn an_anthropic_refusal_keeps_the_providers_own_message() {
         AnthropicMessagesProviderError::HttpStatus {
             status: 400,
             detail: ": messages.0.content: field required".to_owned(),
+            retry_after_seconds: None,
         }
     );
     assert_eq!(
@@ -483,6 +485,7 @@ fn a_gemini_refusal_keeps_the_providers_own_message() {
         GoogleGeminiProviderError::HttpStatus {
             status: 400,
             detail: ": API key not valid. Please pass a valid API key.".to_owned(),
+            retry_after_seconds: None,
         }
     );
     assert_eq!(

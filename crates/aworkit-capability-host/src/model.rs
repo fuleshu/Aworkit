@@ -358,8 +358,17 @@ impl FrozenModelGateway {
                 self.image_resolver.as_deref(),
                 self.image_dispatch,
             )?;
-            let acceptance =
-                provider.execute_cancellable(&materialized, cancellation, &mut emit)?;
+            let acceptance = match provider.execute_cancellable(&materialized, cancellation, &mut emit)
+            {
+                Ok(acceptance) => acceptance,
+                Err(error) => {
+                    turn_completion.complete(
+                        &serde_json::json!({ "error": error.to_string() }),
+                        "failed",
+                    );
+                    return Err(error);
+                }
+            };
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     if events
@@ -517,7 +526,18 @@ impl FrozenModelGateway {
                     );
                     return Err(error);
                 }
-                Err(error) => return Err(error),
+                // Every other provider answer keeps its own bounded text as the
+                // attempt's failure body. A failed attempt that says only that a
+                // result "settled" names neither why the call failed nor what was
+                // done about it, which is what made 297 recorded attempts
+                // unexplainable.
+                Err(error) => {
+                    turn_completion.complete(
+                        &serde_json::json!({ "error": error.to_string() }),
+                        "failed",
+                    );
+                    return Err(error);
+                }
             };
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
@@ -641,6 +661,15 @@ pub enum ProviderError {
     },
     #[error("provider failed: {0}")]
     Failed(String),
+    /// The provider answered with an HTTP status it did not accept. The detail is
+    /// the provider's own bounded diagnostic and the retry delay is what the
+    /// provider asked for, so a rate limit can be honoured instead of guessed at.
+    #[error("provider returned HTTP status {status}{detail}")]
+    HttpStatus {
+        status: u16,
+        detail: String,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("provider request timed out")]
     RequestTimedOut,
     /// An incomplete response was discarded before any requested tools ran.

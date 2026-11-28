@@ -576,7 +576,11 @@ pub fn inspect_api_workflow_with_object_info(
                 class_type: class_type.to_owned(),
                 title: title.clone(),
                 input_name: input_name.clone(),
-                value_kind: ComfyUiValueKindV1::of(value),
+                // The catalog states what the input is; the graph only shows
+                // what it currently holds, and an integer default on a FLOAT
+                // input must not narrow the generated parameter.
+                value_kind: declared_kind(object_info, class_type, input_name)
+                    .unwrap_or_else(|| ComfyUiValueKindV1::of(value)),
                 current_value: preview_value(value),
                 choices,
             });
@@ -593,35 +597,82 @@ pub fn inspect_api_workflow_with_object_info(
     })
 }
 
+/// The declared input specification of one `(class_type, input)` pair in the
+/// `/object_info` catalog.
+///
+/// ComfyUI lists inputs under `required` and `optional`; both are editable and
+/// both can carry a closed choice set, so both are searched. A node or input the
+/// catalog does not describe returns `None` and the caller falls back to the
+/// workflow's current value.
+fn declared_input_spec<'a>(
+    object_info: Option<&'a Value>,
+    class_type: &str,
+    input_name: &str,
+) -> Option<&'a Value> {
+    let input = object_info?.get(class_type)?.get("input")?;
+    ["required", "optional"]
+        .into_iter()
+        .find_map(|section| input.get(section).and_then(|inputs| inputs.get(input_name)))
+}
+
+/// The value kind a node declares for one input, when the catalog reports it.
+///
+/// ComfyUI names the type as a prefix of the input specification: `INT`,
+/// `FLOAT`, `BOOLEAN`, `STRING` or `COMBO`. `FLOAT` is the case that matters
+/// most: a workflow stores `1` for a fractional input, and reading that value
+/// alone would generate an `integer` parameter the node would then refuse.
+fn declared_kind(
+    object_info: Option<&Value>,
+    class_type: &str,
+    input_name: &str,
+) -> Option<ComfyUiValueKindV1> {
+    let declared = declared_input_spec(object_info, class_type, input_name)?
+        .as_array()?
+        .first()?
+        .as_str()?;
+    match declared.to_ascii_uppercase().as_str() {
+        "INT" => Some(ComfyUiValueKindV1::Integer),
+        "FLOAT" => Some(ComfyUiValueKindV1::Number),
+        "BOOLEAN" => Some(ComfyUiValueKindV1::Boolean),
+        "STRING" | "COMBO" => Some(ComfyUiValueKindV1::String),
+        _ => None,
+    }
+}
+
 /// Extracts the closed choice list for one `(class_type, input)` pair when the
 /// object-info catalog reports one.
+///
+/// Current ComfyUI publishes a choice input as `["COMBO", {"options": [...]}]`;
+/// older builds published it as `[[value, ...], {"default": ...}]`. Both shapes
+/// are read, so a generated parameter carries the workflow's allowed values as
+/// a real enum instead of leaving the model to guess a preset string.
 fn choices_for(object_info: Option<&Value>, class_type: &str, input_name: &str) -> Vec<Value> {
-    let Some(catalog) = object_info.and_then(Value::as_object) else {
+    let Some(spec) = declared_input_spec(object_info, class_type, input_name) else {
         return Vec::new();
     };
-    let Some(definition) = catalog.get(class_type).and_then(Value::as_object) else {
+    let Some(parts) = spec.as_array() else {
         return Vec::new();
     };
-    let Some(required) = definition
-        .get("input")
-        .and_then(Value::as_object)
-        .and_then(|input| input.get("required"))
-        .and_then(Value::as_object)
-    else {
-        return Vec::new();
+    let values: &[Value] = match parts.first() {
+        Some(Value::Array(values)) => values.as_slice(),
+        Some(Value::String(kind)) if kind.eq_ignore_ascii_case("COMBO") => {
+            match parts
+                .get(1)
+                .and_then(|metadata| metadata.get("options"))
+                .and_then(Value::as_array)
+            {
+                Some(options) => options.as_slice(),
+                None => return Vec::new(),
+            }
+        }
+        _ => return Vec::new(),
     };
-    match required.get(input_name) {
-        Some(Value::Array(values)) => match values.first() {
-            Some(Value::Array(choices)) => choices
-                .iter()
-                .filter(|value| value.is_string() || value.is_number() || value.is_boolean())
-                .take(512)
-                .cloned()
-                .collect(),
-            _ => Vec::new(),
-        },
-        _ => Vec::new(),
-    }
+    values
+        .iter()
+        .filter(|value| value.is_string() || value.is_number() || value.is_boolean())
+        .take(512)
+        .cloned()
+        .collect()
 }
 
 /// Bounds one current value to a short scalar preview suitable for a prompt or
@@ -729,6 +780,67 @@ mod tests {
             inspect_api_workflow_with_object_info(&graph, Some(&object_info)).unwrap();
         let input = inspection.find("3", "sampler_name").unwrap();
         assert_eq!(input.choices, vec![json!("euler"), json!("dpmpp_2m")]);
+    }
+
+    #[test]
+    fn the_catalog_decides_the_type_instead_of_the_stored_value() {
+        // A workflow stores the integer `1` for a declared FLOAT input. Reading
+        // the value alone generated an `integer` parameter, and dispatch then
+        // refused `2.5` for a node that accepts 0.1..16.0 in steps of 0.1.
+        let graph = json!({
+            "13": {"class_type": "ResolutionSelector", "inputs": {"megapixels": 1, "multiple": 8}}
+        });
+        let object_info = json!({
+            "ResolutionSelector": {"input": {"required": {
+                "megapixels": ["FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.1}],
+                "multiple": ["INT", {"default": 8, "min": 8, "max": 128}]
+            }}}
+        });
+        let inspection =
+            inspect_api_workflow_with_object_info(&graph, Some(&object_info)).unwrap();
+        assert_eq!(
+            inspection.find("13", "megapixels").unwrap().value_kind,
+            ComfyUiValueKindV1::Number
+        );
+        // A declared INT input stays an integer.
+        assert_eq!(
+            inspection.find("13", "multiple").unwrap().value_kind,
+            ComfyUiValueKindV1::Integer
+        );
+        // Without a catalog the stored value is the only witness.
+        let graph_only = inspect_api_workflow(&graph).unwrap();
+        assert_eq!(
+            graph_only.find("13", "megapixels").unwrap().value_kind,
+            ComfyUiValueKindV1::Integer
+        );
+    }
+
+    #[test]
+    fn a_closed_choice_keeps_its_values_in_both_catalog_shapes() {
+        let graph = json!({
+            "13": {"class_type": "ResolutionSelector", "inputs": {"aspect_ratio": "1:1 (Square)"}},
+            "21": {"class_type": "SamplerChoice", "inputs": {"sampler": "euler"}}
+        });
+        // Current ComfyUI publishes a COMBO as ["COMBO", {"options": [...]}];
+        // older builds published it as [[value, ...], {"default": ...}].
+        let object_info = json!({
+            "ResolutionSelector": {"input": {"required": {
+                "aspect_ratio": ["COMBO", {"options": ["1:1 (Square)", "4:3 (Standard)"]}]
+            }}},
+            "SamplerChoice": {"input": {"optional": {
+                "sampler": [["euler", "dpmpp_2m"], {"default": "euler"}]
+            }}}
+        });
+        let inspection =
+            inspect_api_workflow_with_object_info(&graph, Some(&object_info)).unwrap();
+        let ratio = inspection.find("13", "aspect_ratio").unwrap();
+        assert_eq!(ratio.value_kind, ComfyUiValueKindV1::String);
+        assert_eq!(ratio.choices, vec![json!("1:1 (Square)"), json!("4:3 (Standard)")]);
+        // An optional input is editable too and keeps its legacy choice list.
+        assert_eq!(
+            inspection.find("21", "sampler").unwrap().choices,
+            vec![json!("euler"), json!("dpmpp_2m")]
+        );
     }
 
     #[test]

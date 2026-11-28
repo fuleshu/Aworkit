@@ -1,0 +1,54 @@
+{
+  "collection": "markdown_design_documents",
+  "data": {
+    "body": {
+      "lines": [
+        "# Job resolution: release, keep and bounded reads\n",
+        "\n",
+        "## Problem\n",
+        "\n",
+        "In `chat.e663e1a69bd6c316dd372696edb10dda50a2f271` an Agent started a shell job whose stdout reached 526 KB. The job finished, and the completion barrier then reported it as `finished; output not collected`. The only exits the notice offered were `job_output` (drain the log into context), `job_input`, `job_stop`, or `job_keep` — and `job_keep` is deliberately available only for *running* work, so it failed with `job is no longer attached to a live process` and `job has already exited; collect its output`.\n",
+        "\n",
+        "The Agent then shrank Aworkit's own `stdout.log` with `[System.IO.File]::SetLength` so the cursor matched the file size, which flipped `moreOutput` to false and marked the job collected without reading it. An Agent editing the host's job store is a symptom of a missing verb, not model misbehaviour.\n",
+        "\n",
+        "## Decision\n",
+        "\n",
+        "Resolution and reading are separate acts.\n",
+        "\n",
+        "1. **`job_release` acknowledges a finished job.** `tool.job.release { jobId, reason?, discardOutput? }` records a `released` disposition on the job. A released job no longer appears in the completion notice, whether or not its captured bytes were ever read. `collected` stays truthful telemetry about what the model actually read. Release is idempotent, requires no approval (like `job_stop`), and is refused while the job is running with a pointer to `job_stop`/`job_keep`.\n",
+        "2. **`discardOutput` deletes the captured logs.** The record keeps id, kind, status, exit code, timings and the byte counts at release, and reports how many bytes were freed. Run details can therefore still explain the job; only the bytes the model declined to read are gone.\n",
+        "3. **`job_keep` is total.** A running job is retained as before. A finished or detached job returns a success with `kept: false`, `alreadyFinished: true` and a hint naming `job_release` — a legitimate question answered with a success and the right next step, never a failed tool event.\n",
+        "4. **The notice names the cheap exit.** The completion trailer lists `job_release` beside collect/stop/keep, so the gate states the cheapest legal way through itself.\n",
+        "5. **Reads describe their size and can read the end.** `job_output` reports `stdoutBytes`, `stderrBytes` and `remainingBytes`; `mode: \"tail\"` returns the last `maximumBytes` of the captured streams with the cursor advanced to the end and `omittedBytes` reported. A tail read splits its budget evenly between non-empty streams.\n",
+        "\n",
+        "## Invariants\n",
+        "\n",
+        "- Release is a disposition, never a read: releasing does not claim the bytes were seen.\n",
+        "- A terminal job the model has not resolved (neither collected nor released) remains unevictable, exactly as before; a released job is evictable oldest-first like a collected one.\n",
+        "- `discardOutput` removes only Chat working state. Tool results already committed to canonical history are untouched, and the record keeps the counters needed to explain the job.\n",
+        "- A release never crosses a Chat boundary, and a control is scoped to the exact delegating Agent/child where one applies.\n",
+        "- No bound introduced here ends a run: `job_output` truncation reports what was omitted and how to read it, and a refused release names its cause.\n",
+        "\n",
+        "## Rejected alternatives\n",
+        "\n",
+        "- **Let `job_keep` acknowledge.** It means retention of a live service; conflating retention with resolution produced this failure.\n",
+        "- **Auto-collect a finished job after a bounded read.** It would pretend the model saw output it never saw.\n",
+        "- **Auto-prune old job logs.** It surprises the user and breaks Run-details diagnosis; an explicit discard is honest.\n",
+        "- **Delete the record on release.** `job_list` and Run details must keep explaining the job.\n",
+        "\n",
+        "## Verification\n",
+        "\n",
+        "Registry tests cover: a released finished job leaves the notice empty without any read; release with `discardOutput` empties the captured logs while `job_list` keeps status and byte counts; release is refused while running and is idempotent; `job_keep` on a finished job succeeds with the hint; a tail read returns the last bytes with `omittedBytes` and `remainingBytes`; the call contract accepts `mode` and rejects an unknown mode.\n"
+      ]
+    },
+    "external_id": "aworkit.job_resolution_contract",
+    "id": 21563742415,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "title": "Job resolution: release, keep and bounded reads"
+  },
+  "deleted": false,
+  "identity": "4625c4b2-6706-4237-aab4-cf990b5efece",
+  "schemaVersion": 1
+}

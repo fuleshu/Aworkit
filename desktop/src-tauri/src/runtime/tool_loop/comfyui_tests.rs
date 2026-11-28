@@ -57,14 +57,16 @@ fn tiny_png() -> Vec<u8> {
     buffer
 }
 
-/// Serves the three requests one workflow run makes: queue, history and view.
+/// Serves the requests one workflow run makes: queue, history and one view per
+/// produced image. The fixture saves a batch of two, because a result that keeps
+/// only the first image is exactly the defect this path must not reintroduce.
 fn spawn_comfyui_stub() -> (String, std::thread::JoinHandle<()>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let handle = std::thread::spawn(move || {
         let image = tiny_png();
         let mut served = 0;
-        while served < 3 {
+        while served < 4 {
             let Ok((mut stream, _)) = listener.accept() else {
                 return;
             };
@@ -76,7 +78,7 @@ fn spawn_comfyui_stub() -> (String, std::thread::JoinHandle<()>) {
             } else if request.starts_with("GET /history/") {
                 (
                     "application/json",
-                    br#"{"fixture-prompt":{"outputs":{"9":{"images":[{"filename":"krea_00001_.png","subfolder":"","type":"output"}]}}}}"#.to_vec(),
+                    br#"{"fixture-prompt":{"outputs":{"9":{"images":[{"filename":"krea_00001_.png","subfolder":"","type":"output"},{"filename":"krea_00002_.png","subfolder":"","type":"output"}]}}}}"#.to_vec(),
                 )
             } else {
                 ("image/png", image.clone())
@@ -248,17 +250,21 @@ fn a_frozen_comfyui_workflow_tool_is_admitted_and_records_its_image() {
         settled.result.content["source"]["workflowPath"],
         json!(workflow_path.to_string_lossy())
     );
-    // The produced image is stored as immutable evidence and reaches the model.
-    assert_eq!(settled.result.images.len(), 1);
-    let image = &settled.result.images[0];
-    assert_eq!(image.name, "krea_00001_.png");
-    assert_eq!(image.mime_type, "image/png");
-    assert!(image.byte_length > 0);
-    assert!(root
-        .path()
-        .join("images")
-        .join(&image.id)
-        .is_file());
+    // Every produced image is stored as immutable evidence and reaches the
+    // model; a batch of two must not collapse into one.
+    assert_eq!(settled.result.images.len(), 2);
+    let names = settled
+        .result
+        .images
+        .iter()
+        .map(|image| image.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["krea_00001_.png", "krea_00002_.png"]);
+    for image in &settled.result.images {
+        assert_eq!(image.mime_type, "image/png");
+        assert!(image.byte_length > 0);
+        assert!(root.path().join("images").join(&image.id).is_file());
+    }
     // Task #207: the result must name the produced media by absolute path, so
     // the Agent can find it without searching the machine. `outputPath` is the
     // named media file; `storedPath` is the immutable evidence blob it links to.
@@ -275,12 +281,32 @@ fn a_frozen_comfyui_workflow_tool_is_admitted_and_records_its_image() {
             .join("comfyui")
             .join("krea_00001_.png")
     );
+    // The second image is reported as well, with its own published path.
+    let produced = settled.result.content["source"]["images"]
+        .as_array()
+        .expect("the ComfyUI result lists every produced image");
+    assert_eq!(produced.len(), 2);
+    assert_eq!(
+        settled.result.content["source"]["imageCount"],
+        json!(2)
+    );
+    for entry in produced {
+        let path = std::path::Path::new(entry["outputPath"].as_str().unwrap());
+        assert!(path.is_file(), "{}", path.display());
+    }
+    assert_eq!(
+        settled.result.content["image"]["id"],
+        settled.result.images[0].id
+    );
     let stored_path = settled.result.content["source"]["storedPath"]
         .as_str()
         .expect("the ComfyUI result reports the stored evidence path");
     let stored_path = std::path::Path::new(stored_path);
     assert!(stored_path.is_file(), "{}", stored_path.display());
-    assert_eq!(stored_path, root.path().join("images").join(&image.id));
+    assert_eq!(
+        stored_path,
+        root.path().join("images").join(&settled.result.images[0].id)
+    );
 
     // An undeclared argument is refused as a tool error, never executed.
     let bad = ModelToolCallV1 {
@@ -293,4 +319,57 @@ fn a_frozen_comfyui_workflow_tool_is_admitted_and_records_its_image() {
     assert!(refused.result.is_error);
     assert!(refused.result.images.is_empty());
     server.join().unwrap();
+}
+
+#[test]
+fn the_workflow_reader_freezes_the_tool_catalogue_for_the_chat() {
+    // The listing form must report what Settings held when the Chat froze, not
+    // what it holds now, exactly like the workflow path table beside it.
+    let definition = || ModelToolDefinitionV1 {
+        capability_id: crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID.into(),
+        name: "comfyui_get_workflow".into(),
+        description: "List or read".into(),
+        input_schema: crate::runtime::comfyui::comfyui_authoring_schema(
+            crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID,
+        ),
+    };
+    let configuration = json!({
+        "endpoint": "http://127.0.0.1:8188/",
+        "workflows": {"krea": "D:\\wf\\krea.json"},
+        "tools": [{
+            "id": "krea",
+            "name": "Krea",
+            "enabled": true,
+            "workflowPath": "D:\\wf\\krea.json",
+            "parameters": []
+        }],
+    });
+    let binding = |configuration: Value| WorkflowToolBindingV1 {
+        options: Default::default(),
+        capability_id: crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID.into(),
+        configuration,
+        credential_bindings: Vec::new(),
+        definition: Some(definition()),
+    };
+    let frozen = freeze_file_tool_bindings(&[binding(configuration.clone())])
+        .unwrap()
+        .remove(0);
+    match &frozen.limit {
+        StoredFileToolLimitV1::ComfyUiAuthoring {
+            workflows, tools, ..
+        } => {
+            assert_eq!(
+                workflows.get("krea").map(String::as_str),
+                Some("D:\\wf\\krea.json")
+            );
+            assert_eq!(tools.len(), 1);
+            assert_eq!(tools[0]["name"], json!("Krea"));
+        }
+        other => panic!("expected a frozen ComfyUI authoring limit, got {other:?}"),
+    }
+
+    // A configuration key the helper does not accept is refused outright.
+    let mut unknown = configuration;
+    unknown["extra"] = json!(true);
+    assert!(freeze_file_tool_bindings(&[binding(unknown)]).is_err());
 }

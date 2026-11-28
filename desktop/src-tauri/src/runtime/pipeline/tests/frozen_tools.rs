@@ -140,14 +140,14 @@ fn large_catalog_reaches_the_model_in_new_and_continued_chats() {
         json!(large.tools.iter().map(|tool| &tool.capability_id).collect::<Vec<_>>());
 
     pipeline.execute(large.clone()).unwrap();
-    assert_eq!(control.offered_descriptions.lock().unwrap().len(), 273);
+    assert_eq!(control.offered_descriptions.lock().unwrap().len(), 274);
     control.offered_descriptions.lock().unwrap().clear();
 
     large.request_id = stable("command.large-catalog-first").unwrap();
     large.chat_id = stable("chat.large-catalog").unwrap();
     large.run_id = stable("run.large-catalog").unwrap();
     pipeline.execute(large).unwrap();
-    assert_eq!(control.offered_descriptions.lock().unwrap().len(), 273);
+    assert_eq!(control.offered_descriptions.lock().unwrap().len(), 274);
 }
 
 /// The interface the model is offered re-resolves from this build, so a Chat

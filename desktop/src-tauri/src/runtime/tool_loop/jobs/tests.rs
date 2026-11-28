@@ -351,6 +351,24 @@ fn job_argument_rejections_name_the_offending_key() {
     );
 }
 
+#[test]
+fn job_release_and_tail_mode_are_validated() {
+    // Every accepted shape is cheap; every rejected shape names what it refused.
+    assert!(validate("job_release", &json!({"jobId":"job.a"})).is_ok());
+    assert!(
+        validate(
+            "job_release",
+            &json!({"jobId":"job.a","reason":"log not needed","discardOutput":true})
+        )
+        .is_ok()
+    );
+    assert!(validate("job_release", &json!({"jobId":"job.a","discardOutput":"yes"})).is_err());
+    assert!(validate("job_release", &json!({"jobId":"job.a","discard":true})).is_err());
+    assert!(validate("job_output", &json!({"jobId":"job.a","mode":"tail"})).is_ok());
+    assert!(validate("job_output", &json!({"jobId":"job.a","mode":"read"})).is_ok());
+    assert!(validate("job_output", &json!({"jobId":"job.a","mode":"sideways"})).is_err());
+}
+
 /// A thousand unresolved jobs must not produce a notice that grows with them. The
 /// dispatch bound is 4 KiB, so the notice summarizes and states what it omitted;
 /// no job count may fail a request or end a turn.

@@ -13,6 +13,12 @@ use super::*;
 const COMFYUI_WAIT: Duration = Duration::from_secs(600);
 /// Largest workflow JSON read for execution.
 const MAXIMUM_WORKFLOW_BYTES: u64 = 2 * 1024 * 1024;
+/// Most images one call stores from one prompt. A larger batch keeps the first
+/// images and reports how many were left out, so the omission is visible.
+const MAXIMUM_WORKFLOW_IMAGES: usize = 32;
+/// Most images one result attaches for the model's own vision. The rest stay
+/// stored and published, and are named in `source.images`.
+const MAXIMUM_ATTACHED_IMAGES: usize = 8;
 /// Stable client id, so a ComfyUI server can group Aworkit's queues.
 const COMFYUI_CLIENT_ID: &str = "aworkit";
 
@@ -93,54 +99,114 @@ impl FileToolDispatcherV1 {
             .map_err(|error| {
                 format!("ComfyUI did not finish prompt {prompt_id} within {}s: {error}", COMFYUI_WAIT.as_secs())
             })?;
-        let (filename, subfolder, kind) = first_output_image(&entry).ok_or_else(|| {
-            format!("ComfyUI finished prompt {prompt_id} without an image output")
-        })?;
-        if cancellation.is_cancelled() {
-            return Err("ComfyUI workflow run cancelled".into());
+        let produced = output_images(&entry);
+        if produced.is_empty() {
+            return Err(format!(
+                "ComfyUI finished prompt {prompt_id} without an image output"
+            ));
         }
-        let bytes = client
-            .view(&filename, &subfolder, &kind)
-            .map_err(|error| format!("Could not read the produced image: {error}"))?;
-        let image = self
-            .runtime
-            .images
-            .import_bytes(filename.clone(), &bytes)
-            .map_err(|error| format!("Could not store the produced image: {error}"))?;
-        // Two paths are reported: the named media file a person or a media tool
-        // can use directly, and the immutable evidence blob it links to.
-        let stored_path = self.runtime.images.blob_path(&image);
-        let (output_path, export_error) = match self
-            .runtime
-            .images
-            .publish_media("comfyui", &subfolder, &filename, &image)
-        {
-            Ok(path) => (path, None),
-            Err(error) => (stored_path.clone(), Some(error)),
-        };
-        let summary = format!(
-            "Ran ComfyUI workflow {prompt_id}; produced {} ({} bytes) at {}.",
-            image.name,
-            image.byte_length,
-            output_path.display()
+        let total = produced.len();
+        let mut images = Vec::new();
+        let mut sources = Vec::new();
+        for (filename, subfolder, kind) in produced.iter().take(MAXIMUM_WORKFLOW_IMAGES) {
+            if cancellation.is_cancelled() {
+                return Err("ComfyUI workflow run cancelled".into());
+            }
+            let bytes = client
+                .view(filename, subfolder, kind)
+                .map_err(|error| format!("Could not read the produced image: {error}"))?;
+            let image = self
+                .runtime
+                .images
+                .import_bytes(filename.clone(), &bytes)
+                .map_err(|error| format!("Could not store the produced image: {error}"))?;
+            // Two paths are reported per image: the named media file a person or
+            // a media tool can use directly, and the immutable evidence blob it
+            // links to.
+            let stored_path = self.runtime.images.blob_path(&image);
+            let (output_path, export_error) = match self
+                .runtime
+                .images
+                .publish_media("comfyui", subfolder, filename, &image)
+            {
+                Ok(path) => (path, None),
+                Err(error) => (stored_path.clone(), Some(error)),
+            };
+            let mut entry_source = json!({
+                "filename": filename,
+                "subfolder": subfolder,
+                "kind": kind,
+                "byteLength": image.byte_length,
+                "outputPath": output_path.to_string_lossy(),
+                "storedPath": stored_path.to_string_lossy(),
+            });
+            if let Some(error) = export_error {
+                // The blob already exists, so a failed named export is reported
+                // to the model instead of failing the call.
+                if let Some(object) = entry_source.as_object_mut() {
+                    object.insert("outputPathError".into(), Value::from(error));
+                }
+            }
+            sources.push(entry_source);
+            images.push(json!(image));
+        }
+        let stored = sources.len();
+        let omitted = total.saturating_sub(stored);
+        // The first entry is reported twice for compatibility, so it is cloned
+        // before the full list is moved into the result.
+        let first = sources[0].clone();
+        // `image` and `source.outputPath` keep naming the first image, so a
+        // caller written against the single-image shape keeps working; `images`
+        // carries the produced images for the model's own vision.
+        let attachments = images
+            .iter()
+            .take(MAXIMUM_ATTACHED_IMAGES)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut summary = format!(
+            "Ran ComfyUI workflow {prompt_id}; produced {stored} image(s) at {}",
+            first["outputPath"].as_str().unwrap_or_default()
         );
+        if stored > 1 {
+            summary.push_str(&format!(
+                "; all {stored} are stored and published, and listed in source.images"
+            ));
+        } else {
+            summary.push('.');
+        }
+        if stored > attachments.len() {
+            summary.push_str(&format!(
+                " The first {} are attached to this result; the rest are named in source.images.",
+                attachments.len()
+            ));
+        }
+        if omitted > 0 {
+            summary.push_str(&format!(
+                " {omitted} further image(s) were not stored because one call keeps at most {MAXIMUM_WORKFLOW_IMAGES}."
+            ));
+        }
         let mut source = json!({
             "endpoint": endpoint,
             "workflowPath": workflow_path,
             "promptId": prompt_id,
-            "filename": filename,
-            "subfolder": subfolder,
-            "outputPath": output_path.to_string_lossy(),
-            "storedPath": stored_path.to_string_lossy(),
+            "imageCount": stored,
+            "attachedCount": attachments.len(),
+            "images": sources,
+            "filename": first["filename"].clone(),
+            "subfolder": first["subfolder"].clone(),
+            "outputPath": first["outputPath"].clone(),
+            "storedPath": first["storedPath"].clone(),
         });
-        if let Some(error) = export_error {
-            // The blob already exists, so a failed named export is reported to
-            // the model instead of failing the call.
+        if omitted > 0 {
             if let Some(object) = source.as_object_mut() {
-                object.insert("outputPathError".into(), Value::from(error));
+                object.insert("imagesOmitted".into(), Value::from(omitted));
             }
         }
-        Ok((json!({ "image": image, "source": source }), summary))
+        let first_image = attachments.first().cloned().unwrap_or(Value::Null);
+        Ok((
+            json!({ "image": first_image, "images": attachments, "source": source }),
+            summary,
+        ))
     }
 
     /// Runs one read-only ComfyUI authoring helper.
@@ -197,23 +263,37 @@ impl FileToolDispatcherV1 {
                 ))
             }
             crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID => {
-                let workflow_id = arguments
-                    .get("workflow")
-                    .and_then(Value::as_str)
-                    .ok_or("ComfyUI workflow id must be a string")?;
-                let path = match &self.record.binding.limit {
-                    StoredFileToolLimitV1::ComfyUiAuthoring { workflows, .. } => {
-                        workflows.get(workflow_id).ok_or_else(|| {
-                            format!("'{workflow_id}' is not a configured ComfyUI workflow tool")
-                        })?
+                let (workflows, tools) = match &self.record.binding.limit {
+                    StoredFileToolLimitV1::ComfyUiAuthoring {
+                        workflows, tools, ..
+                    } => (workflows, tools),
+                    _ => {
+                        return Err("ComfyUI authoring binding has no frozen workflow table".into())
                     }
-                    _ => return Err("ComfyUI authoring binding has no frozen workflow table".into()),
                 };
-                let graph = read_bounded_workflow(Path::new(path))?;
-                Ok((
-                    json!({ "workflow": workflow_id, "workflowPath": path, "graph": graph }),
-                    format!("Read the API graph of ComfyUI workflow '{workflow_id}'."),
-                ))
+                match arguments.get("workflow").and_then(Value::as_str) {
+                    Some(workflow_id) => {
+                        let path = workflows.get(workflow_id).ok_or_else(|| {
+                            format!("'{workflow_id}' is not a configured ComfyUI workflow tool")
+                        })?;
+                        let graph = read_bounded_workflow(Path::new(path))?;
+                        Ok((
+                            json!({ "workflow": workflow_id, "workflowPath": path, "graph": graph }),
+                            format!("Read the API graph of ComfyUI workflow '{workflow_id}'."),
+                        ))
+                    }
+                    // Omitting the id asks what is configured: the display name,
+                    // enable state, workflow file and every parameter binding of
+                    // each tool, including tools this Chat cannot call itself.
+                    None => {
+                        let catalogue = workflow_tool_catalogue(workflows, tools);
+                        let count = catalogue.len();
+                        Ok((
+                            json!({ "endpoint": endpoint, "tools": catalogue }),
+                            format!("Listed {count} configured ComfyUI workflow tool(s)."),
+                        ))
+                    }
+                }
             }
             _ => Err("Unknown ComfyUI authoring capability".into()),
         }
@@ -259,6 +339,32 @@ fn node_catalog_page(catalog: &Value, search: &str, limit: usize) -> (Vec<Value>
     (matched.into_iter().take(limit).collect(), total)
 }
 
+/// The configured tools the workflow reader lists when no id is given.
+///
+/// A binding frozen before the catalogue existed carries only the id and path
+/// table; it still answers with those facts rather than reporting an empty
+/// workbook, so an older Chat can describe what it is configured with.
+fn workflow_tool_catalogue(
+    workflows: &BTreeMap<String, String>,
+    tools: &[Value],
+) -> Vec<Value> {
+    if !tools.is_empty() {
+        return tools.to_vec();
+    }
+    workflows
+        .iter()
+        .map(|(id, path)| {
+            json!({
+                "id": id,
+                "name": id,
+                "enabled": true,
+                "workflowPath": path,
+                "parameters": [],
+            })
+        })
+        .collect()
+}
+
 /// Reads one API workflow JSON under the same 2 MiB bound execution uses.
 fn read_bounded_workflow(path: &Path) -> Result<Value, String> {
     let metadata = std::fs::metadata(path)
@@ -272,49 +378,56 @@ fn read_bounded_workflow(path: &Path) -> Result<Value, String> {
         .map_err(|error| format!("The ComfyUI workflow is not valid JSON: {error}"))
 }
 
-/// The image a ComfyUI history entry produced.
+/// Every image a ComfyUI history entry produced, in the order ComfyUI reports.
 ///
 /// A saved `output` is preferred over a `temp` preview, because a preview is
-/// regenerated and may not exist once the prompt settles. Node order is not
-/// meaningful to ComfyUI, so the first reported candidate of the best kind wins;
-/// an entry without any image returns `None` instead of inventing a filename.
+/// regenerated and may not exist once the prompt settles; when the entry
+/// carries only previews they are returned as the fallback. Node order is not
+/// meaningful to ComfyUI, so the output nodes' own order is preserved and a
+/// filename repeated across nodes is reported once. An entry without an image
+/// returns an empty list instead of inventing a filename.
 #[must_use]
-fn first_output_image(entry: &Value) -> Option<(String, String, String)> {
-    let outputs = entry.get("outputs")?.as_object()?;
-    let mut fallback = None;
+fn output_images(entry: &Value) -> Vec<(String, String, String)> {
+    let Some(outputs) = entry.get("outputs").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut saved = Vec::new();
+    let mut previews = Vec::new();
+    let mut seen = BTreeSet::new();
     for output in outputs.values() {
-        let Some(image) = output
-            .get("images")
-            .and_then(Value::as_array)
-            .and_then(|images| images.first())
-        else {
+        let Some(images) = output.get("images").and_then(Value::as_array) else {
             continue;
         };
-        let Some(filename) = image.get("filename").and_then(Value::as_str) else {
-            continue;
-        };
-        let kind = image
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("output")
-            .to_owned();
-        let candidate = (
-            filename.to_owned(),
-            image
+        for image in images {
+            let Some(filename) = image.get("filename").and_then(Value::as_str) else {
+                continue;
+            };
+            let subfolder = image
                 .get("subfolder")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .to_owned(),
-            kind.clone(),
-        );
-        if kind == "output" {
-            return Some(candidate);
-        }
-        if fallback.is_none() {
-            fallback = Some(candidate);
+                .to_owned();
+            let kind = image
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("output")
+                .to_owned();
+            if !seen.insert((subfolder.clone(), filename.to_owned())) {
+                continue;
+            }
+            let candidate = (filename.to_owned(), subfolder, kind.clone());
+            if kind == "output" {
+                saved.push(candidate);
+            } else {
+                previews.push(candidate);
+            }
         }
     }
-    fallback
+    if saved.is_empty() {
+        previews
+    } else {
+        saved
+    }
 }
 
 #[cfg(test)]
@@ -322,25 +435,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_first_reported_image_is_the_produced_file() {
+    fn every_saved_image_is_reported_in_the_order_comfyui_lists_it() {
+        // A batch run saves two files from one node; both belong to the result.
         let entry = json!({
             "outputs": {
-                "9": {"images": [{"filename": "krea_00001_.png", "subfolder": "", "type": "output"}]},
+                "9": {"images": [
+                    {"filename": "krea_00001_.png", "subfolder": "", "type": "output"},
+                    {"filename": "krea_00002_.png", "subfolder": "", "type": "output"}
+                ]},
                 "12": {"images": [{"filename": "other.png", "subfolder": "sub", "type": "temp"}]},
             }
         });
-        let (filename, subfolder, kind) = first_output_image(&entry).expect("an image");
-        assert_eq!(filename, "krea_00001_.png");
-        assert_eq!(subfolder, "");
-        assert_eq!(kind, "output");
+        let images = output_images(&entry);
+        assert_eq!(
+            images,
+            vec![
+                ("krea_00001_.png".into(), String::new(), "output".into()),
+                ("krea_00002_.png".into(), String::new(), "output".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_preview_only_entry_falls_back_to_the_temp_image_and_repeats_are_collapsed() {
+        let entry = json!({
+            "outputs": {
+                "9": {"images": [{"filename": "preview.png", "subfolder": "", "type": "temp"}]},
+                "10": {"images": [{"filename": "preview.png", "subfolder": "", "type": "temp"}]},
+            }
+        });
+        assert_eq!(
+            output_images(&entry),
+            vec![("preview.png".into(), String::new(), "temp".into())]
+        );
     }
 
     #[test]
     fn an_entry_without_images_or_a_filename_reports_nothing() {
-        assert!(first_output_image(&json!({"outputs": {}})).is_none());
-        assert!(first_output_image(&json!({"outputs": {"9": {"text": []}}})).is_none());
-        assert!(first_output_image(&json!({"outputs": {"9": {"images": [{}]}}})).is_none());
-        assert!(first_output_image(&json!({})).is_none());
+        assert!(output_images(&json!({"outputs": {}})).is_empty());
+        assert!(output_images(&json!({"outputs": {"9": {"text": []}}})).is_empty());
+        assert!(output_images(&json!({"outputs": {"9": {"images": [{}]}}})).is_empty());
+        assert!(output_images(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn the_reader_lists_the_frozen_catalogue_and_falls_back_to_the_id_table() {
+        let frozen = vec![json!({
+            "id": "krea",
+            "name": "Krea",
+            "enabled": true,
+            "workflowPath": "D:\\wf\\krea.json",
+            "parameters": []
+        })];
+        // A binding frozen with the catalogue reports it verbatim.
+        assert_eq!(workflow_tool_catalogue(&BTreeMap::new(), &frozen), frozen);
+        // A binding frozen before the catalogue existed still names its tools.
+        let workflows = BTreeMap::from([("qwen".to_owned(), "D:\\wf\\qwen.json".to_owned())]);
+        let listed = workflow_tool_catalogue(&workflows, &[]);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], json!("qwen"));
+        assert_eq!(listed[0]["workflowPath"], json!("D:\\wf\\qwen.json"));
+        assert_eq!(listed[0]["parameters"], json!([]));
     }
 
     #[test]

@@ -27,7 +27,10 @@ and what execution writes cannot drift apart.
 
 A parameter declares its name, description, JSON type, whether it is required,
 an optional default or allowed values, and the exact **binding**: the workflow
-node id and input name the value is written to.
+node id and input name the value is written to. Auto create reads the node's
+declared input type from the running server, so a `FLOAT` input is offered as a
+number even when the workflow currently stores a whole number, and a preset input
+carries the values the node allows.
 
 **The binding is the security boundary.** A workflow tool can write only to a
 node input that exists in that referenced workflow. It cannot invent a node, an
@@ -37,12 +40,15 @@ a workflow tool can never shadow them.
 
 ## Authoring helpers
 
-Two read-only native tools help while you author bindings:
+Two read-only native tools help while you author bindings and while an agent
+uses them:
 
 - `comfyui_list_node_types` searches the live `/object_info` catalog under a
   bounded page.
-- `comfyui_get_workflow` returns the API graph of one configured workflow tool
-  so you can inspect its node ids and input names.
+- `comfyui_get_workflow` without arguments lists every configured workflow tool
+  with its id, display name, enabled state, workflow file and parameter
+  bindings; with a workflow id it returns that workflow's API graph so you can
+  inspect its node ids and input names.
 
 Both run without approval. The ComfyUI tab can also register an optional
 workflow-authoring MCP server that gives the agent ComfyUI node and workflow
@@ -65,8 +71,11 @@ initiative.
 - A call is refused before ComfyUI sees it when it carries an undeclared key,
   omits a required value, passes a null, uses the wrong JSON type or selects a
   value outside the reported choice set.
-- A successful run returns the produced images as immutable image evidence and
-  as vision input for the model.
+- A successful run returns **every** image the workflow produced: each is stored
+  as immutable image evidence, published as a named media file and attached to
+  the result as vision input. `source.outputPath` names the first,
+  `source.images` lists all of them, so a workflow with a `batch_size` above one
+  is not silently reduced to a single file.
 - An unreachable server, a workflow that produces no image, and unreadable or
   oversized workflow JSON are all reported as named failures; the run continues.
 

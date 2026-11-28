@@ -142,6 +142,8 @@ impl<'a> ProviderResponse<'a> {
         let status = self.response.status();
         if !status.is_success() {
             let status = status.as_u16();
+            // Read the wait the provider named before consuming the response.
+            let retry_after_seconds = retry_after_seconds(&self.response);
             // Preserve the status even if the bounded diagnostic cannot be read.
             let detail = match self.read_bounded(64 * 1024) {
                 Ok(bytes) => bytes,
@@ -155,6 +157,7 @@ impl<'a> ProviderResponse<'a> {
                 BoundedJsonError::HttpStatus {
                     status,
                     detail: http_status_detail(excerpt.as_deref()),
+                    retry_after_seconds,
                 }
             });
         }
@@ -225,9 +228,15 @@ pub(crate) enum BoundedJsonError {
     RequestTimedOut,
     #[error("provider transport failed")]
     Transport,
-    /// The provider's own bounded diagnostic, when it sent one.
+    /// The provider's own bounded diagnostic, when it sent one, plus the
+    /// `Retry-After` delay it asked for if it named one. A rate limit that names
+    /// its own wait is honoured instead of being replaced by a guess.
     #[error("provider returned HTTP status {status}{detail}")]
-    HttpStatus { status: u16, detail: String },
+    HttpStatus {
+        status: u16,
+        detail: String,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("provider response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("provider response is not valid JSON")]
@@ -276,6 +285,21 @@ fn provider_error_excerpt(bytes: &[u8]) -> Option<String> {
 /// The suffix one HTTP status error carries: empty, or the provider's own words.
 pub(crate) fn http_status_detail(detail: Option<&str>) -> String {
     detail.map(|detail| format!(": {detail}")).unwrap_or_default()
+}
+
+/// The delay a provider asked for through `Retry-After`, in whole seconds.
+///
+/// Only the delta-seconds form is honoured; an HTTP-date or a malformed value is
+/// ignored rather than guessed at, so the caller falls back to its own bounded
+/// backoff. The value is capped so a hostile or mistaken header cannot park a run.
+pub(crate) fn retry_after_seconds(response: &Response) -> Option<u64> {
+    const MAXIMUM_RETRY_AFTER_SECONDS: u64 = 300;
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| text.trim().parse::<u64>().ok())
+        .map(|seconds| seconds.min(MAXIMUM_RETRY_AFTER_SECONDS))
 }
 
 /// Read only a bounded error body, report whether it is a canonical overflow, and

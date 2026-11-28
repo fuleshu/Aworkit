@@ -124,9 +124,9 @@ impl ProviderEnginePortV1 for Provider {
             1 | 2 if self.malformed => {
                 return Err(ProviderError::InvalidToolCall("missing function name"));
             }
-            // Distinct provider failures, each the model's to handle.
-            1 => return Err(ProviderError::Failed("quota exceeded".into())),
-            2 => return Err(ProviderError::Failed("upstream unavailable".into())),
+            // Distinct provider refusals, each the model's to handle.
+            1 => return Err(ProviderError::Failed("the provider rejected the request".into())),
+            2 => return Err(ProviderError::Failed("upstream rejected the request".into())),
             // The model answers after being told.
             _ => {
                 emit(ModelToolEventV1::AssistantOutput {
@@ -184,7 +184,9 @@ impl ProviderEnginePortV1 for StuckUntilAnswering {
     ) -> Result<ProviderAcceptanceV1, ProviderError> {
         self.observed.lock().unwrap().push(request.clone());
         if self.dispatches.fetch_add(1, Ordering::SeqCst) < self.failures {
-            return Err(ProviderError::Failed("quota exceeded".into()));
+            return Err(ProviderError::Failed(
+                "the provider rejected the request".into(),
+            ));
         }
         emit(ModelToolEventV1::AssistantOutput {
             text: "Stopping with what I have.".into(),
@@ -484,8 +486,8 @@ fn a_provider_failure_is_reported_to_the_model_and_the_agent_finishes() {
         2,
         "each distinct provider failure becomes one model-visible turn"
     );
-    assert!(notices[0].contains("quota exceeded"));
-    assert!(notices[1].contains("upstream unavailable"));
+    assert!(notices[0].contains("the provider rejected the request"));
+    assert!(notices[1].contains("upstream rejected the request"));
     assert_eq!(
         turns.last().unwrap().exchanges.len(),
         1,
@@ -527,7 +529,7 @@ fn a_short_run_of_unchanged_failures_is_reported_and_the_model_still_answers() {
         .filter_map(|turn| turn.retry_notice.as_deref())
         .collect();
     assert_eq!(notices.len(), 3, "every rejected attempt carries a notice");
-    assert!(notices[0].contains("quota exceeded"));
+    assert!(notices[0].contains("the provider rejected the request"));
     assert!(
         notices[1].contains("same provider failure repeated"),
         "a repeat is reported as a repeat instead of being withheld: {}",
@@ -556,7 +558,7 @@ fn an_identically_repeating_provider_failure_ends_the_pass_instead_of_spinning()
         Err(failure) => failure,
     };
     assert!(
-        failure.error.to_string().contains("quota exceeded"),
+        failure.error.to_string().contains("the provider rejected the request"),
         "the provider's own failure is what gets reported: {failure}"
     );
 
@@ -564,13 +566,10 @@ fn an_identically_repeating_provider_failure_ends_the_pass_instead_of_spinning()
     assert_eq!(
         turns.len(),
         crate::runtime::model_tool_loop::MAXIMUM_IDENTICAL_PROVIDER_FAILURES as usize,
-        "the loop stops at the threshold instead of dispatching the same bytes again"
+        "the class streak stops at the threshold instead of dispatching again"
     );
     assert!(
-        failure
-            .error
-            .to_string()
-            .contains("refused this exact request"),
+        failure.error.to_string().contains("repeated 10 times in a row"),
         "the reported failure explains why the pass stopped: {failure}"
     );
 }

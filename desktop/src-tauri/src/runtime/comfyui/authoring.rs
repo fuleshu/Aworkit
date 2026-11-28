@@ -368,6 +368,33 @@ mod tests {
     }
 
     #[test]
+    fn a_declared_float_input_is_never_narrowed_to_integer() {
+        // The workflow stores the integer `1` for a FLOAT input. A model that
+        // declares "integer" must still yield a `number` parameter: dispatch
+        // would otherwise refuse the fractional value the node accepts.
+        let inspection = aworkit_capability_host::inspect_api_workflow_with_object_info(
+            &json!({"13": {"class_type": "ResolutionSelector", "inputs": {"megapixels": 1}}}),
+            Some(&json!({"ResolutionSelector": {"input": {"required": {
+                "megapixels": ["FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0}]
+            }}}})),
+        )
+        .unwrap();
+        let accepted = accept_authoring_output(
+            output(json!([
+                {"name": "megapixels", "description": "Approximate size", "valueType": "integer", "required": false, "default": 1, "nodeId": "13", "inputName": "megapixels"}
+            ])),
+            &inspection,
+            "fallback",
+            "D:\\wf\\image.json",
+        )
+        .unwrap();
+        assert_eq!(
+            accepted.tool.parameters[0].value_kind,
+            ComfyUiParameterKindV2::Number
+        );
+    }
+
+    #[test]
     fn acceptance_rejects_invented_bindings() {
         let inspection = inspection();
         let error = accept_authoring_output(

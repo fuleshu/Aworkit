@@ -155,14 +155,14 @@ fn cancel(
         .runtime
         .jobs
         .stop_unkept_scoped(&dispatcher.context.chat_id, Some(child_id.as_str()));
-    let updated = SubagentChildFrameV1 {
-        head_revision: frame.head_revision.saturating_add(1),
-        status: ChildStatusV1::Cancelled,
-        updated_at: crate::runtime::history::now_label(),
-        ..frame
-    };
+    // The frame records what the child really did. Its live counters are the
+    // ones the user reads to judge spend, so they are merged before the terminal
+    // frame is committed instead of being reported as zeros.
+    let updated = cancelled_frame(&dispatcher.runtime, &frame);
     dispatcher.persist_child(&updated)?;
     publish_child_fact(&dispatcher.run_events, &updated, ChildStatusV1::Cancelled)?;
+    // The cancel result carries the terminal status to the model directly.
+    let _ = mark_child_reported(&dispatcher.run_events, &updated, ChildStatusV1::Cancelled);
     Ok((
         updated.outcome(dispatcher.child_jobs(&child_id)?),
         format!("Cancelled subagent {child_id} and stopped its remaining jobs."),

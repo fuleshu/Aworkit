@@ -71,6 +71,99 @@ pub(crate) struct RunEventStream {
     /// Set only on a detached background-child stream, so its span root can be
     /// attributed to the delegated scope rather than to the parent Agent.
     subagent_child: Option<String>,
+    /// When this stream last committed an event, in epoch seconds. A pass that
+    /// commits nothing is silent, not necessarily working, so the stall monitor
+    /// reads this to make silence visible.
+    last_commit_epoch_seconds: std::sync::atomic::AtomicU64,
+}
+
+/// How long a live pass may commit nothing before its silence is reported.
+/// A long provider turn still streams and commits, so this is not a deadline: it
+/// is the point at which "no events" stops being explainable.
+pub(crate) const PASS_STALL_AFTER_SECONDS: u64 = 180;
+/// How often a continued stall is re-reported, so a hung pass keeps leaving a
+/// trail instead of one stale line.
+const PASS_STALL_REPEAT_SECONDS: u64 = 300;
+/// Poll interval of the monitor. Short enough that dropping the monitor stops it
+/// promptly, long enough to cost nothing while a pass runs.
+const PASS_STALL_POLL_MILLIS: u64 = 250;
+
+/// Watches one pass for silence and reports it. Dropping the monitor stops and
+/// joins the watcher, so no thread outlives the pass it watches.
+pub(crate) struct PassStallMonitorV1 {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for PassStallMonitorV1 {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Decide whether a pass that last committed at `last_commit` is due a stall
+/// report at `now`. Pure so the threshold and the repeat window are testable
+/// without waiting on a clock.
+fn stall_report_seconds(
+    now: u64,
+    last_commit: u64,
+    last_reported: Option<u64>,
+    after_seconds: u64,
+    repeat_seconds: u64,
+) -> Option<u64> {
+    let age = now.saturating_sub(last_commit);
+    if age < after_seconds {
+        return None;
+    }
+    if let Some(last_reported) = last_reported
+        && now.saturating_sub(last_reported) < repeat_seconds
+    {
+        return None;
+    }
+    Some(age)
+}
+
+/// Report one stall if it is due, returning the moment it was reported.
+///
+/// Kept separate from the watcher thread so the durable report can be asserted
+/// without waiting for a real stall window.
+fn report_stall_if_due(
+    stream: &RunEventStream,
+    now: u64,
+    last_reported: Option<u64>,
+    after_seconds: u64,
+    repeat_seconds: u64,
+) -> Option<u64> {
+    let last_commit = stream
+        .last_commit_epoch_seconds
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let age = stall_report_seconds(now, last_commit, last_reported, after_seconds, repeat_seconds)?;
+    let sequence = stream.committed_sequence();
+    // Reporting is durable evidence: if it cannot be committed the stream is
+    // already unhealthy and says so on its own.
+    let _ = stream.context_event(
+        "chat.stall",
+        json!({
+            "status": "stalled",
+            "ageSeconds": age,
+            "lastCommittedSequence": sequence,
+            "observedAt": now.to_string(),
+            "body": format!(
+                "This pass has committed no event for {age}s. The last committed sequence is \
+                 {sequence}; it is still running, so its status is stalled rather than running."
+            ),
+        }),
+    );
+    Some(now)
+}
+
+fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |value| value.as_secs())
 }
 
 /// The conversation prefix the delegating Agent had committed when its tools
@@ -414,9 +507,61 @@ impl RunEventStream {
             pending_delta: Mutex::new(None),
             parent_conversation: Mutex::new(None),
             subagent_child,
+            last_commit_epoch_seconds: std::sync::atomic::AtomicU64::new(epoch_seconds()),
         };
         stream.ensure_root_span();
         stream
+    }
+
+    /// Watches this pass for silence until the returned monitor is dropped.
+    ///
+    /// A pass that commits nothing for [`PASS_STALL_AFTER_SECONDS`] is reported
+    /// as `chat.stall` with the last committed sequence and its age, so a hung
+    /// Run cannot sit open with zero events until the user stops it. Reporting
+    /// never ends the pass: only the model's answer, the user or an authority
+    /// denial may.
+    pub(crate) fn start_stall_monitor(self: &Arc<Self>) -> PassStallMonitorV1 {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stream = Arc::clone(self);
+        let thread_stop = Arc::clone(&stop);
+        let thread = std::thread::Builder::new()
+            .name("aworkit-pass-stall".into())
+            .spawn(move || {
+                let mut last_reported: Option<u64> = None;
+                while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        PASS_STALL_POLL_MILLIS,
+                    ));
+                    if thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let now = epoch_seconds();
+                    let Some(reported) = report_stall_if_due(
+                        &stream,
+                        now,
+                        last_reported,
+                        PASS_STALL_AFTER_SECONDS,
+                        PASS_STALL_REPEAT_SECONDS,
+                    ) else {
+                        continue;
+                    };
+                    last_reported = Some(reported);
+                }
+            });
+        PassStallMonitorV1 {
+            stop,
+            thread: thread.ok(),
+        }
+    }
+
+    /// Position of the newest committed event in this stream, which is what a
+    /// stall report names.
+    pub(crate) fn committed_sequence(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .events
+            .len()
     }
 
     /// Captures the delegating Agent's conversation prefix for this model turn.
@@ -570,11 +715,19 @@ impl RunEventStream {
         match self.committer.commit(vec![draft]) {
             Ok(mut committed) => {
                 let event = committed.pop()?;
-                self.state
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .events
-                    .push(event.clone());
+                self.last_commit_epoch_seconds
+                    .store(epoch_seconds(), std::sync::atomic::Ordering::Relaxed);
+                let sequence = {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    state.events.push(event.clone());
+                    state.events.len()
+                };
+                // A crash report must say how far the history had got, so the
+                // process records its newest committed sequence as it commits.
+                super::crash_report::note_committed_sequence(sequence as u64);
                 Some(event)
             }
             Err(error) => {
@@ -1295,7 +1448,10 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
                 .get("error")
                 .filter(|_| status == "failed")
                 .and_then(Value::as_str)
-                .unwrap_or("Canonical model result settled.");
+                .unwrap_or(
+                    "The model call ended without a terminal result and no cause reached the \
+                     observer.",
+                );
             self.stream.terminal_span(
                 &span_id,
                 status,
@@ -1895,5 +2051,95 @@ mod tests {
             event.kind == "span.completed"
                 && event.span_id.as_deref() == Some("span.tool.call.approved-edit")
         }));
+    }
+
+    #[test]
+    fn a_pass_that_stops_committing_is_reported_as_stalled_with_its_last_sequence() {
+        let committer = ephemeral_semantic_event_committer();
+        let stream = RunEventStream::new(
+            "request.stall".into(),
+            "run.stall".into(),
+            committer.clone(),
+            CancellationToken::default(),
+        );
+        stream
+            .context_event("context.test", json!({"step": 1}))
+            .expect("a committed step");
+        let sequence = stream.committed_sequence();
+        let last_commit = stream
+            .last_commit_epoch_seconds
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let now = last_commit + PASS_STALL_AFTER_SECONDS + 5;
+
+        assert_eq!(
+            report_stall_if_due(
+                &stream,
+                now,
+                None,
+                PASS_STALL_AFTER_SECONDS,
+                PASS_STALL_REPEAT_SECONDS
+            ),
+            Some(now),
+            "a silent pass is reported once its window expires"
+        );
+        let stall = committer
+            .committed_events()
+            .expect("committed events")
+            .into_iter()
+            .find(|event| event.kind == "chat.stall")
+            .expect("the stall report is durable evidence");
+        assert_eq!(stall.payload["status"], json!("stalled"));
+        assert_eq!(stall.payload["lastCommittedSequence"], json!(sequence));
+        assert!(
+            stall.payload["ageSeconds"].as_u64().unwrap_or(0) >= PASS_STALL_AFTER_SECONDS
+        );
+
+        // A continued stall is re-reported only after the repeat window.
+        assert_eq!(
+            report_stall_if_due(
+                &stream,
+                now + 1,
+                Some(now),
+                PASS_STALL_AFTER_SECONDS,
+                PASS_STALL_REPEAT_SECONDS
+            ),
+            None
+        );
+        assert!(
+            report_stall_if_due(
+                &stream,
+                now + PASS_STALL_REPEAT_SECONDS,
+                Some(now),
+                PASS_STALL_AFTER_SECONDS,
+                PASS_STALL_REPEAT_SECONDS
+            )
+            .is_some(),
+            "a still-hung pass keeps leaving a trail"
+        );
+    }
+
+    #[test]
+    fn a_pass_that_is_still_committing_is_not_reported_as_stalled() {
+        let committer = ephemeral_semantic_event_committer();
+        let stream = RunEventStream::new(
+            "request.working".into(),
+            "run.working".into(),
+            committer,
+            CancellationToken::default(),
+        );
+        let last_commit = stream
+            .last_commit_epoch_seconds
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            report_stall_if_due(
+                &stream,
+                last_commit + 10,
+                None,
+                PASS_STALL_AFTER_SECONDS,
+                PASS_STALL_REPEAT_SECONDS
+            ),
+            None,
+            "activity is not silence"
+        );
     }
 }

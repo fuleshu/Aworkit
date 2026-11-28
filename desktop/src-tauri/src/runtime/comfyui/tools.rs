@@ -110,7 +110,7 @@ pub fn comfyui_authoring_description(capability_id: &str) -> Option<&'static str
             "Search the live ComfyUI node type catalog and return a bounded compact list of node types, categories and input names. Use it while authoring workflow parameter bindings.",
         ),
         COMFYUI_GET_WORKFLOW_CAPABILITY_ID => Some(
-            "Read the API graph of one configured ComfyUI workflow tool, so its node ids and input names can be inspected before a parameter binding is proposed. Read-only.",
+            "List the configured ComfyUI workflow tools with their id, display name, enabled state and parameter bindings, or read the API graph of one of them. Call it without a workflow id to discover what is configured and which arguments a tool accepts; pass a workflow id to read that workflow's graph. Read-only.",
         ),
         _ => None,
     }
@@ -141,10 +141,9 @@ pub fn comfyui_authoring_schema(capability_id: &str) -> Value {
             "properties": {
                 "workflow": {
                     "type": "string",
-                    "description": "Id of a configured ComfyUI workflow tool."
+                    "description": "Optional id of a configured ComfyUI workflow tool. Omit it to list every configured tool with its parameter bindings."
                 }
             },
-            "required": ["workflow"],
             "additionalProperties": false
         }),
         _ => json!({"type": "object", "properties": {}, "additionalProperties": false}),
@@ -167,6 +166,32 @@ pub fn comfyui_authoring_configuration(
             .map(|tool| (tool.id.clone(), json!(tool.workflow_path)))
             .collect::<Map<String, Value>>();
         configuration.insert("workflows".to_owned(), Value::Object(workflows));
+        // The listing form of the helper reports what Settings actually holds,
+        // so a model can learn a tool's parameters without that tool being
+        // frozen into its own Chat.
+        let catalogue = workflow_tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "id": tool.id,
+                    "name": tool.name,
+                    "description": tool.description,
+                    "enabled": tool.enabled,
+                    "workflowPath": tool.workflow_path,
+                    "parameters": tool.parameters.iter().map(|parameter| json!({
+                        "name": parameter.name,
+                        "description": parameter.description,
+                        "valueKind": parameter.value_kind,
+                        "required": parameter.required,
+                        "defaultValue": parameter.default_value,
+                        "choices": parameter.choices,
+                        "nodeId": parameter.node_id,
+                        "inputName": parameter.input_name,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        configuration.insert("tools".to_owned(), Value::Array(catalogue));
     }
     configuration
 }
@@ -200,7 +225,7 @@ pub fn comfyui_native_tools(configuration: &ComfyUiConfigurationV2) -> Vec<Comfy
         .map(|tool| ComfyUiNativeTool {
             capability_id: comfyui_capability_id(&tool.id),
             name: comfyui_provider_name(&tool.id),
-            description: tool.description.clone(),
+            description: comfyui_model_description(tool),
             input_schema: comfyui_input_schema(tool),
             tool: tool.clone(),
         })
@@ -223,10 +248,45 @@ pub fn comfyui_native_tool(
         .map(|tool| ComfyUiNativeTool {
             capability_id: comfyui_capability_id(&tool.id),
             name: comfyui_provider_name(&tool.id),
-            description: tool.description.clone(),
+            description: comfyui_model_description(tool),
             input_schema: comfyui_input_schema(tool),
             tool: tool.clone(),
         })
+}
+
+/// Builds the model-facing description of one workflow tool.
+///
+/// The text the user authored in Settings is written for a person and describes
+/// what the workflow is for. It says nothing about how a call settles, and a
+/// model that has to discover that by reading Aworkit's own source or Settings
+/// file burns a Run. The generated facts state what is true of every call, so
+/// the authored prose stays first and the facts follow it.
+#[must_use]
+pub fn comfyui_model_description(tool: &ComfyUiWorkflowToolV2) -> String {
+    let facts = comfyui_runtime_facts(tool);
+    let authored = tool.description.trim();
+    if authored.is_empty() {
+        facts
+    } else {
+        format!("{authored}\n\n{facts}")
+    }
+}
+
+/// The generated statement of per-call facts appended to a workflow tool.
+#[must_use]
+pub fn comfyui_runtime_facts(tool: &ComfyUiWorkflowToolV2) -> String {
+    format!(
+        "Runs the ComfyUI API workflow `{}` (capability id `comfyui.{}`). Every image the workflow produces is stored, published and returned: `image` and `source.outputPath` name the first, `source.images` lists all of them, and `source.promptId` identifies the ComfyUI queue entry. An argument outside the declared parameter list is refused before ComfyUI is contacted.",
+        workflow_file_name(&tool.workflow_path),
+        tool.id
+    )
+}
+
+/// The file name of one configured workflow path, for the model-facing facts.
+fn workflow_file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\'])
+        .find(|component| !component.is_empty())
+        .unwrap_or(path)
 }
 
 /// Builds the JSON input schema for one workflow tool.
@@ -410,13 +470,61 @@ mod tests {
         );
         assert_eq!(
             comfyui_authoring_schema(COMFYUI_GET_WORKFLOW_CAPABILITY_ID)["required"],
-            json!(["workflow"])
+            json!(null)
         );
         assert_eq!(
             comfyui_authoring_schema(COMFYUI_NODE_TYPES_CAPABILITY_ID)["properties"]["limit"]
                 ["maximum"],
             json!(200)
         );
+    }
+
+    #[test]
+    fn the_generated_facts_name_the_workflow_and_the_return_shape() {
+        // The authored text stays first; the facts follow so a model knows how
+        // a call settles without reading Aworkit's source or Settings file.
+        let mut tool = workflow_tool("krea", true);
+        tool.description = "Generates one image from a prompt.".into();
+        tool.workflow_path = "D:\\workflows\\Krea-2_Turbo_API.json".into();
+        let description = comfyui_model_description(&tool);
+        assert!(description.starts_with("Generates one image from a prompt."));
+        assert!(description.contains("Krea-2_Turbo_API.json"));
+        assert!(description.contains("comfyui.krea"));
+        assert!(description.contains("source.outputPath"));
+        assert!(description.contains("source.images"));
+        // A tool with no authored text is described by the facts alone.
+        tool.description = "   ".into();
+        let facts_only = comfyui_model_description(&tool);
+        assert!(!facts_only.starts_with(' '));
+        assert!(facts_only.contains("Krea-2_Turbo_API.json"));
+    }
+
+    #[test]
+    fn the_helper_configuration_lists_every_configured_tool_with_its_bindings() {
+        let mut off = workflow_tool("off", false);
+        off.name = "Disabled tool".into();
+        off.parameters = vec![parameter("prompt", ComfyUiParameterKindV2::String, true)];
+        let configuration = comfyui_authoring_configuration(
+            COMFYUI_GET_WORKFLOW_CAPABILITY_ID,
+            "http://127.0.0.1:8188/",
+            &[workflow_tool("krea", true), off],
+        );
+        let tools = configuration["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        // A disabled tool is listed with its state, so the model can explain a
+        // missing capability instead of guessing that it does not exist.
+        assert_eq!(tools[1]["id"], json!("off"));
+        assert_eq!(tools[1]["name"], json!("Disabled tool"));
+        assert_eq!(tools[1]["enabled"], json!(false));
+        assert_eq!(tools[0]["parameters"][0]["name"], json!("prompt"));
+        assert_eq!(tools[0]["parameters"][0]["nodeId"], json!("6"));
+        // The node catalog helper has no workflow table to carry.
+        let catalog = comfyui_authoring_configuration(
+            COMFYUI_NODE_TYPES_CAPABILITY_ID,
+            "http://127.0.0.1:8188/",
+            &[],
+        );
+        assert!(catalog.get("tools").is_none());
     }
 
     #[test]
